@@ -1,0 +1,63 @@
+<?php
+
+namespace HamzaWakrim\SafeMigrations\Analysis;
+
+/**
+ * Tracks schema state across the statements of one check run, so operations on
+ * tables created earlier in the same run (which hold no production data yet)
+ * are not reported.
+ */
+final class Context
+{
+    /** @var array<string, true> */
+    private array $created = [];
+
+    /** @var array<string, true> Tables SQLite is currently rebuilding via __temp__ copies. */
+    private array $rebuilding = [];
+
+    public function isNew(string $table): bool
+    {
+        return isset($this->created[$table]);
+    }
+
+    public function isRebuilding(string $table): bool
+    {
+        return isset($this->rebuilding[$table]);
+    }
+
+    public function record(Statement $statement): void
+    {
+        $sql = $statement->normalized;
+
+        if (preg_match('/^create table (?:if not exists )?([\w.]+)/', $sql, $m)) {
+            if (str_starts_with($m[1], '__temp__')) {
+                $this->rebuilding[substr($m[1], 8)] = true;
+            } else {
+                $this->created[$m[1]] = true;
+            }
+
+            return;
+        }
+
+        if (preg_match('/^alter table __temp__(\w+) rename to /', $sql, $m)) {
+            unset($this->rebuilding[$m[1]]);
+
+            return;
+        }
+
+        if (preg_match('/^drop table (?:if exists )?([\w.]+)/', $sql, $m) && ! $this->isRebuilding($m[1])) {
+            unset($this->created[$m[1]]);
+
+            return;
+        }
+
+        if (preg_match('/^(?:alter table ([\w.]+) rename to|rename table ([\w.]+) to) ([\w.]+)/', $sql, $m)) {
+            $from = $m[1] !== '' ? $m[1] : $m[2];
+
+            if ($this->isNew($from)) {
+                unset($this->created[$from]);
+                $this->created[$m[3]] = true;
+            }
+        }
+    }
+}

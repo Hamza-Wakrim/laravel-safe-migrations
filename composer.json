@@ -1,0 +1,42 @@
+{
+    "name": "hamza-wakrim/laravel-safe-migrations",
+    "description": "Catch dangerous Laravel migrations (dropped or renamed columns, blocking indexes, NOT NULL columns without defaults...) before they reach production.",
+    "type": "library",
+    "license": "MIT",
+    "keywords": ["laravel", "migrations", "zero-downtime", "database", "linter", "safety"],
+    "require": {
+        "php": "^8.2",
+        "illuminate/console": "^11.0|^12.0|^13.0",
+        "illuminate/database": "^11.0|^12.0|^13.0",
+        "illuminate/support": "^11.0|^12.0|^13.0"
+    },
+    "require-dev": {
+        "orchestra/testbench": "^9.0|^10.0|^11.0",
+        "phpunit/phpunit": "^11.0|^12.0"
+    },
+    "autoload": {
+        "psr-4": {
+            "HamzaWakrim\\SafeMigrations\\": "src/"
+        }
+    },
+    "autoload-dev": {
+        "psr-4": {
+            "HamzaWakrim\\SafeMigrations\\Tests\\": "tests/"
+        }
+    },
+    "extra": {
+        "laravel": {
+            "providers": [
+                "HamzaWakrim\\SafeMigrations\\SafeMigrationsServiceProvider"
+            ]
+        }
+    },
+    "scripts": {
+        "test": "phpunit"
+    },
+    "config": {
+        "sort-packages": true
+    },
+    "minimum-stability": "stable",
+    "prefer-stable": true
+}
