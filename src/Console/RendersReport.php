@@ -9,6 +9,13 @@ use HamzaWakrim\SafeMigrations\Analysis\Report;
  */
 trait RendersReport
 {
+    protected function databaseOption(): ?string
+    {
+        $database = $this->option('database');
+
+        return is_string($database) && $database !== '' ? $database : null;
+    }
+
     protected function renderReport(Report $report, string $format = 'table'): void
     {
         if ($format === 'json') {

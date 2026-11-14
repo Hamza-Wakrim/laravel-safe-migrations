@@ -3,7 +3,14 @@
     "description": "Catch dangerous Laravel migrations (dropped or renamed columns, blocking indexes, NOT NULL columns without defaults...) before they reach production.",
     "type": "library",
     "license": "MIT",
-    "keywords": ["laravel", "migrations", "zero-downtime", "database", "linter", "safety"],
+    "keywords": [
+        "laravel",
+        "migrations",
+        "zero-downtime",
+        "database",
+        "linter",
+        "safety"
+    ],
     "require": {
         "php": "^8.2",
         "illuminate/console": "^12.0|^13.0",
@@ -11,6 +18,7 @@
         "illuminate/support": "^12.0|^13.0"
     },
     "require-dev": {
+        "larastan/larastan": "^3.0",
         "orchestra/testbench": "^10.0|^11.0",
         "phpunit/phpunit": "^11.0|^12.0"
     },
@@ -32,7 +40,8 @@
         }
     },
     "scripts": {
-        "test": "phpunit"
+        "test": "phpunit",
+        "analyse": "phpstan analyse --memory-limit=1G"
     },
     "config": {
         "sort-packages": true

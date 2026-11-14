@@ -2,6 +2,7 @@
 
 namespace HamzaWakrim\SafeMigrations;
 
+use Illuminate\Database\Connection;
 use Illuminate\Database\ConnectionResolverInterface;
 use Illuminate\Database\Migrations\Migrator;
 use HamzaWakrim\SafeMigrations\Analysis\Analyzer;
@@ -19,18 +20,22 @@ use Throwable;
  */
 final class MigrationInspector
 {
-    /** @param  list<string>  $ignoredMigrations */
+    /**
+     * @param  list<string>  $ignoredMigrations
+     * @param  list<string>  $connectionNames  Every configured connection; all of them pretend during the dry run.
+     */
     public function __construct(
         private readonly Migrator $migrator,
         private readonly ConnectionResolverInterface $connections,
         private readonly Analyzer $analyzer,
         private readonly array $ignoredMigrations = [],
+        private readonly array $connectionNames = [],
     ) {}
 
-    /** @param  list<string>  $paths */
+    /** @param  array<string>  $paths */
     public function inspect(array $paths, ?string $database = null, bool $pendingOnly = true): Report
     {
-        return $this->migrator->usingConnection($database, function () use ($paths, $database, $pendingOnly) {
+        $inspect = function () use ($paths, $database, $pendingOnly): Report {
             $files = $this->migrator->getMigrationFiles($paths);
 
             if ($pendingOnly && $this->migrator->repositoryExists()) {
@@ -49,34 +54,30 @@ final class MigrationInspector
 
                 $analysed[] = $name;
 
+                $migration = null;
+
                 try {
                     $migration = $this->resolve($path);
-                    $connection = $this->connections->connection($migration->getConnection() ?? $database);
-                    $queries = $connection->pretend(function () use ($migration) {
-                        if (method_exists($migration, 'up')) {
-                            $migration->up();
-                        }
-                    });
+                    $statements = $this->dryRun($migration, $database, $name);
+                    $results = $this->analyzer->analyze($statements, $context);
                 } catch (Throwable $e) {
-                    $findings[] = new Finding(
-                        'analysis-failed',
-                        Severity::Warning,
-                        'Could not dry-run this migration: '.$e->getMessage(),
-                        'Migrations that read data (e.g. if (Schema::hasColumn(...))) cannot be fully analysed in pretend mode. Review it manually.',
-                        migration: $name,
-                    );
+                    $results = [];
+                    $severity = $this->analyzer->severityFor('analysis-failed', Severity::Warning);
 
-                    continue;
+                    if ($severity !== null) {
+                        $results[] = new Finding(
+                            'analysis-failed',
+                            $severity,
+                            'Could not dry-run this migration: '.$e->getMessage(),
+                            'Migrations that read data (e.g. if (Schema::hasColumn(...))) cannot be fully analysed in pretend mode. Review it manually.',
+                            migration: $name,
+                        );
+                    }
                 }
 
-                $statements = array_map(
-                    fn (array $query) => new Statement($query['query'], $connection->getDriverName(), $name),
-                    $queries,
-                );
+                $allowances = $migration !== null ? AllowUnsafe::on($migration) : [];
 
-                $allowances = AllowUnsafe::on($migration);
-
-                foreach ($this->analyzer->analyze($statements, $context) as $finding) {
+                foreach ($results as $finding) {
                     $allowed = array_filter($allowances, fn (AllowUnsafe $a) => $a->allows($finding->rule)) !== [];
 
                     if ($allowed) {
@@ -88,7 +89,72 @@ final class MigrationInspector
             }
 
             return new Report($analysed, $findings, $suppressed);
-        });
+        };
+
+        // usingConnection() is documented as taking a string, so only switch when a connection was asked for.
+        return $database === null ? $inspect() : $this->migrator->usingConnection($database, $inspect);
+    }
+
+    /**
+     * Run the migration's up() with pretend mode on for its own connection AND
+     * every other configured connection, so a migration that also uses
+     * Schema::connection('other') or DB::connection('other') never executes
+     * anything for real during the check.
+     *
+     * @return list<Statement>
+     */
+    private function dryRun(object $migration, ?string $database, string $name): array
+    {
+        $own = method_exists($migration, 'getConnection') ? $migration->getConnection() : null;
+        $primary = $this->connections->connection(is_string($own) ? $own : $database);
+
+        if (! $primary instanceof Connection) {
+            throw new \RuntimeException('Unsupported database connection type: '.$primary::class);
+        }
+
+        /** @var array<int, Connection> $connections */
+        $connections = [spl_object_id($primary) => $primary];
+
+        foreach ($this->connectionNames as $connectionName) {
+            try {
+                $connection = $this->connections->connection($connectionName);
+            } catch (Throwable) {
+                continue; // Misconfigured or unavailable driver: nothing can run on it either.
+            }
+
+            if ($connection instanceof Connection) {
+                $connections[spl_object_id($connection)] ??= $connection;
+            }
+        }
+
+        /** @var array<int, array<int, array{query: string}>> $logs */
+        $logs = [];
+
+        $run = function () use ($migration) {
+            if (method_exists($migration, 'up')) {
+                $migration->up();
+            }
+        };
+
+        // Nest pretend() calls so every connection is pretending while up() runs.
+        foreach (array_reverse($connections, true) as $id => $connection) {
+            $inner = $run;
+            $run = function () use ($connection, $inner, $id, &$logs) {
+                $logs[$id] = $connection->pretend($inner);
+            };
+        }
+
+        $run();
+
+        $statements = [];
+
+        foreach ($connections as $id => $connection) {
+            foreach ($logs[$id] ?? [] as $query) {
+                $statements[] = new Statement($query['query'], $connection->getDriverName(), $name);
+            }
+        }
+
+        return $statements;
     }
 
     /**

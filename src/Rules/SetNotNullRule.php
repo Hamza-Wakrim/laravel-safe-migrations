@@ -16,9 +16,13 @@ final class SetNotNullRule implements Rule
 
     public function inspect(Statement $statement, Context $context): iterable
     {
-        if (! [$table, $clauses] = $statement->alterTable()) {
+        $alter = $statement->alterTable();
+
+        if ($alter === null) {
             return;
         }
+
+        [$table, $clauses] = $alter;
 
         if ($context->isNew($table)) {
             return;

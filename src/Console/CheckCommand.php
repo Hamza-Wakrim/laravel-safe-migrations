@@ -20,6 +20,9 @@ final class CheckCommand extends BaseCommand
 
     protected $description = 'Dry-run pending migrations and report operations that are unsafe for zero-downtime deploys';
 
+    /** @var Migrator */
+    protected $migrator;
+
     public function __construct(Migrator $migrator)
     {
         parent::__construct();
@@ -29,13 +32,21 @@ final class CheckCommand extends BaseCommand
 
     public function handle(MigrationInspector $inspector): int
     {
+        $format = $this->option('format');
+
+        if (! in_array($format, ['table', 'json'], true)) {
+            $this->components->error('Invalid --format. Use "table" or "json".');
+
+            return self::INVALID;
+        }
+
         $report = $inspector->inspect(
             $this->getMigrationPaths(),
-            $this->option('database') ?: null,
+            $this->databaseOption(),
             pendingOnly: ! $this->option('all'),
         );
 
-        $this->renderReport($report, (string) $this->option('format'));
+        $this->renderReport($report, $format);
 
         return $report->fails((bool) $this->option('strict')) ? self::FAILURE : self::SUCCESS;
     }

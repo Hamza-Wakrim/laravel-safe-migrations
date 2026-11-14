@@ -22,6 +22,9 @@ final class MigrateSafeCommand extends BaseCommand
 
     protected $description = 'Check pending migrations for unsafe operations, then run them';
 
+    /** @var Migrator */
+    protected $migrator;
+
     public function __construct(Migrator $migrator)
     {
         parent::__construct();
@@ -31,7 +34,7 @@ final class MigrateSafeCommand extends BaseCommand
 
     public function handle(MigrationInspector $inspector): int
     {
-        $database = $this->option('database') ?: null;
+        $database = $this->databaseOption();
         $report = $inspector->inspect($this->getMigrationPaths(), $database);
 
         if ($report->migrations !== []) {

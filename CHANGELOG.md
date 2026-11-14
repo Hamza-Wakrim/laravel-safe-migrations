@@ -2,6 +2,20 @@
 
 All notable changes to this project are documented here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses [Semantic Versioning](https://semver.org/).
 
+## [1.0.2] - 2026-11-14
+
+### Fixed
+
+- **The dry run could change other databases.** When a migration also used another connection (`Schema::connection('other')`, `DB::connection('other')`), those statements ran for real during `safe-migrations:check`, `migrate:safe` and the guard. Every configured connection is now in pretend mode during the check, and statements on other connections are analysed too.
+- Avoid passing `null` to `Migrator::usingConnection()` when no `--database` is given.
+
+### Added
+
+- `analysis-failed` is now a normal rule: set its severity or turn it off in the config, or allow it with `#[AllowUnsafe('analysis-failed')]`.
+- `safe-migrations:check` rejects an unknown `--format` instead of silently printing the table.
+- Static analysis with Larastan (level 8) and tests against the oldest supported dependency versions in CI.
+- End-to-end tests of the commands on real MySQL and PostgreSQL.
+
 ## [1.0.1] - 2026-11-14
 
 ### Changed
@@ -19,5 +33,6 @@ All notable changes to this project are documented here. The format follows [Kee
 - Rules: `drop-table`, `drop-column`, `rename-table`, `rename-column`, `add-not-null-column`, `change-column`, `set-not-null`, `blocking-index`, `blocking-foreign-key`, `table-rebuild`, `data-mutation`.
 - Support for MySQL/MariaDB, PostgreSQL and SQLite on Laravel 12 and 13 (PHP 8.2+, Laravel 13 needs PHP 8.3+).
 
+[1.0.2]: https://github.com/Hamza-Wakrim/laravel-safe-migrations/releases/tag/v1.0.2
 [1.0.1]: https://github.com/Hamza-Wakrim/laravel-safe-migrations/releases/tag/v1.0.1
 [1.0.0]: https://github.com/Hamza-Wakrim/laravel-safe-migrations/releases/tag/v1.0.0

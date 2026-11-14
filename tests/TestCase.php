@@ -24,6 +24,12 @@ abstract class TestCase extends Orchestra
             'foreign_key_constraints' => true,
         ]);
 
+        $config->set('database.connections.secondary', [
+            'driver' => 'sqlite',
+            'database' => ':memory:',
+            'prefix' => '',
+        ]);
+
         $config->set('database.connections.mysql', [
             'driver' => 'mysql',
             'host' => env('SAFE_MIGRATIONS_MYSQL_HOST'),

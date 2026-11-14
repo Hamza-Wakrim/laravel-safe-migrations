@@ -62,6 +62,8 @@ This package finds those problems **before** you run `migrate`. It dry-runs your
 
 Because it reads the SQL and not your PHP code, it also catches `DB::statement(...)`, `DB::table(...)->update(...)` and anything else your migration executes.
 
+**Every** configured database connection is in pretend mode during the check, so a migration that also uses `Schema::connection('analytics')` or `DB::connection('tenant')` is analysed too, and nothing runs on those databases either.
+
 Tables that are **created in the same batch** of pending migrations are never flagged. They hold no production data yet, so adding indexes or dropping columns on them is harmless.
 
 ## Requirements
@@ -299,6 +301,7 @@ To skip a migration completely (for example, an old one you don't want to touch)
 | [`blocking-foreign-key`](#blocking-foreign-key) | warning | PostgreSQL |
 | [`table-rebuild`](#table-rebuild) | warning | SQLite |
 | [`data-mutation`](#data-mutation) | warning | all |
+| [`analysis-failed`](#analysis-failed) | warning | all |
 
 Most fixes follow the same idea, sometimes called **expand / contract**: never remove or change something the running code depends on in the same deploy. Add the new thing, deploy code that uses it, and remove the old thing in a later release.
 
@@ -473,6 +476,14 @@ User::query()->whereNull('newsletter')->chunkById(1000, function ($users) {
 });
 ```
 
+### `analysis-failed`
+
+**Flags:** a migration that throws an error during the dry run, usually because it reads data first (pretend mode returns no rows), for example `DB::table('settings')->first()->value`.
+
+**Why:** the checker could not see what the migration would do, so it can't tell you whether it is safe.
+
+**Safe way:** review the migration by hand. If you are happy with it, mark it with `#[AllowUnsafe('analysis-failed')]`.
+
 ## Configuration reference
 
 After publishing, `config/safe-migrations.php` contains:
@@ -492,6 +503,7 @@ return [
         'blocking-foreign-key' => null,
         'table-rebuild' => null,
         'data-mutation' => null,
+        'analysis-failed' => null,
     ],
 
     // Migration names (file name without .php) that are never checked
@@ -635,12 +647,15 @@ Everything runs in Docker, including MySQL 8.4 and PostgreSQL 17 for the integra
 ```bash
 docker compose build
 docker compose run --rm tests
+docker compose run --rm tests composer analyse
 docker compose down
 ```
 
 - `tests/Unit` checks the rules against hand-written SQL.
 - `tests/Feature/GrammarIntegrationTest.php` runs real Laravel schema code through each database's grammar, so the rules are tested against the exact SQL Laravel generates on SQLite, MySQL and PostgreSQL.
 - `tests/Feature/CommandsTest.php` covers the commands, `#[AllowUnsafe]` and the guard.
+- `tests/Feature/RealDatabaseCommandsTest.php` runs the commands end to end on real MySQL and PostgreSQL.
+- `composer analyse` runs Larastan (PHPStan for Laravel) at level 8.
 
 Without Docker, `composer install && vendor/bin/phpunit` runs the SQLite tests and skips MySQL and PostgreSQL.
 
