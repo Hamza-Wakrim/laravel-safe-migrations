@@ -2,6 +2,12 @@
 
 All notable changes to this project are documented here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses [Semantic Versioning](https://semver.org/).
 
+## [1.0.3] - 2026-11-14
+
+### Fixed
+
+- When a migration is reported as `analysis-failed` because it sends SQL straight to PDO (`DB::getPdo()->exec(...)`), the suggestion now says to use `DB::statement()` or `DB::unprepared()` so the SQL can be checked, instead of the generic hint about migrations that read data.
+
 ## [1.0.2] - 2026-11-14
 
 ### Fixed
@@ -35,6 +41,7 @@ All notable changes to this project are documented here. The format follows [Kee
 - Rules: `drop-table`, `drop-column`, `rename-table`, `rename-column`, `add-not-null-column`, `change-column`, `set-not-null`, `blocking-index`, `blocking-foreign-key`, `table-rebuild`, `data-mutation`.
 - Support for MySQL/MariaDB, PostgreSQL and SQLite on Laravel 12 and 13 (PHP 8.2+, Laravel 13 needs PHP 8.3+).
 
+[1.0.3]: https://github.com/Hamza-Wakrim/laravel-safe-migrations/releases/tag/v1.0.3
 [1.0.2]: https://github.com/Hamza-Wakrim/laravel-safe-migrations/releases/tag/v1.0.2
 [1.0.1]: https://github.com/Hamza-Wakrim/laravel-safe-migrations/releases/tag/v1.0.1
 [1.0.0]: https://github.com/Hamza-Wakrim/laravel-safe-migrations/releases/tag/v1.0.0
