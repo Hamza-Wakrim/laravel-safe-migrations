@@ -11,6 +11,6 @@ All notable changes to this project are documented here. The format follows [Kee
 - Optional guard that stops the plain `migrate` command in chosen environments.
 - `#[AllowUnsafe]` attribute to mark reviewed migrations.
 - Rules: `drop-table`, `drop-column`, `rename-table`, `rename-column`, `add-not-null-column`, `change-column`, `set-not-null`, `blocking-index`, `blocking-foreign-key`, `table-rebuild`, `data-mutation`.
-- Support for MySQL/MariaDB, PostgreSQL and SQLite on Laravel 11, 12 and 13.
+- Support for MySQL/MariaDB, PostgreSQL and SQLite on Laravel 12 and 13 (PHP 8.2+, Laravel 13 needs PHP 8.3+).
 
 [1.0.0]: https://github.com/Hamza-Wakrim/laravel-safe-migrations/releases/tag/v1.0.0

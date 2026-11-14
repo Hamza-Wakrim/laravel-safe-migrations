@@ -67,7 +67,7 @@ Tables that are **created in the same batch** of pending migrations are never fl
 ## Requirements
 
 - PHP 8.2 or newer
-- Laravel 11 or newer
+- Laravel 12 or 13
 - MySQL / MariaDB, PostgreSQL or SQLite (SQL Server is not supported)
 
 ## Installation
