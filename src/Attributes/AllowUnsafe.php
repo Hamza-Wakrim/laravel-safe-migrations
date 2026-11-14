@@ -20,7 +20,7 @@ final class AllowUnsafe
     /** @param  string|list<string>  $rules */
     public function __construct(string|array $rules = [], public readonly ?string $reason = null)
     {
-        $this->rules = array_values((array) $rules);
+        $this->rules = is_string($rules) ? [$rules] : $rules;
     }
 
     public function allows(string $rule): bool

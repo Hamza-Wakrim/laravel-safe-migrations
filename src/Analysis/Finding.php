@@ -31,6 +31,7 @@ final class Finding implements JsonSerializable
         return $this->severity === Severity::Error;
     }
 
+    /** @return array<string, string|null> */
     public function jsonSerialize(): array
     {
         return [

@@ -20,9 +20,13 @@ final class BlockingForeignKeyRule implements Rule
 
     public function inspect(Statement $statement, Context $context): iterable
     {
-        if ($statement->driver !== 'pgsql' || ! [$table, $clauses] = $statement->alterTable()) {
+        $alter = $statement->driver === 'pgsql' ? $statement->alterTable() : null;
+
+        if ($alter === null) {
             return;
         }
+
+        [$table, $clauses] = $alter;
 
         if ($context->isNew($table)) {
             return;

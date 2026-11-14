@@ -28,6 +28,7 @@ return [
         'blocking-foreign-key' => null, // warning  (PostgreSQL, foreign key without NOT VALID)
         'table-rebuild' => null,        // warning  (SQLite table copy for ->change() etc.)
         'data-mutation' => null,        // warning  (UPDATE / DELETE without WHERE, TRUNCATE)
+        'analysis-failed' => null,      // warning  (the migration threw an error during the dry run)
     ],
 
     /*

@@ -45,6 +45,20 @@ final class Analyzer
         ];
     }
 
+    /**
+     * The severity a finding of this rule gets after config overrides, or null when the rule is turned off.
+     */
+    public function severityFor(string $rule, Severity $default): ?Severity
+    {
+        $override = $this->severities[$rule] ?? null;
+
+        return match (true) {
+            $override === false => null,
+            is_string($override) => Severity::from($override),
+            default => $default,
+        };
+    }
+
     /** @return list<string> */
     public function ruleIds(): array
     {
@@ -62,17 +76,16 @@ final class Analyzer
 
         foreach ($statements as $statement) {
             foreach ($this->rules as $id => $rule) {
-                $override = $this->severities[$id] ?? null;
-
-                if ($override === false) {
+                if (($this->severities[$id] ?? null) === false) {
                     continue;
                 }
 
                 foreach ($rule->inspect($statement, $context) as $finding) {
+                    $severity = $this->severityFor($id, $finding->severity);
                     $finding = $finding->forStatement($statement);
 
-                    if (is_string($override)) {
-                        $finding = $finding->withSeverity(Severity::from($override));
+                    if ($severity !== null && $severity !== $finding->severity) {
+                        $finding = $finding->withSeverity($severity);
                     }
 
                     // One finding per migration/rule/subject, e.g. PostgreSQL emits several clauses per ->change().

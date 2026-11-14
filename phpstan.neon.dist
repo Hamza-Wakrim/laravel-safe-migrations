@@ -1,0 +1,13 @@
+includes:
+    - vendor/larastan/larastan/extension.neon
+
+parameters:
+    level: 8
+    paths:
+        - src
+    reportUnmatchedIgnoredErrors: false
+    ignoreErrors:
+        # PHP 8.2's PDO stub says quote() never returns false; newer PHP versions say it can.
+        -
+            message: '#DryRunPdo::quote\(\) never returns false#'
+            path: src/Support/DryRunPdo.php

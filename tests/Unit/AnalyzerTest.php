@@ -107,6 +107,22 @@ final class AnalyzerTest extends TestCase
         $this->assertSame(Severity::Warning, $findings[0]->severity);
     }
 
+    public function test_several_statements_in_one_string_are_split(): void
+    {
+        $this->assertSame(
+            ["UPDATE users SET bio = 'a; b'", 'ALTER TABLE "x;y" DROP COLUMN z', '/* note; */ DELETE FROM logs'],
+            Statement::splitStatements("UPDATE users SET bio = 'a; b'; ALTER TABLE \"x;y\" DROP COLUMN z;\n/* note; */ DELETE FROM logs;"),
+        );
+    }
+
+    public function test_postgres_function_bodies_are_not_split(): void
+    {
+        $function = 'CREATE FUNCTION touch() RETURNS trigger AS $$ BEGIN UPDATE users SET name = 1; RETURN NEW; END; $$ LANGUAGE plpgsql';
+
+        $this->assertSame([$function, 'SELECT 1'], Statement::splitStatements($function.'; SELECT 1'));
+        $this->assertSame([], $this->rules([new Statement($function, 'pgsql')]));
+    }
+
     public function test_commas_inside_parentheses_and_strings_do_not_split_clauses(): void
     {
         $this->assertSame(

@@ -7,3 +7,4 @@
 /Dockerfile         export-ignore
 /docker-compose.yml export-ignore
 /phpunit.xml        export-ignore
+/phpstan.neon.dist  export-ignore

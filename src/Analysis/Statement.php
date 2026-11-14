@@ -41,6 +41,86 @@ final class Statement
     }
 
     /**
+     * Split a string holding several SQL statements on top-level semicolons.
+     *
+     * Semicolons inside quotes, quoted identifiers, comments and PostgreSQL
+     * dollar-quoted bodies ($$ ... $$, $tag$ ... $tag$) do not split.
+     *
+     * @return list<string>
+     */
+    public static function splitStatements(string $sql): array
+    {
+        $statements = [];
+        $current = '';
+        $length = strlen($sql);
+
+        for ($i = 0; $i < $length; $i++) {
+            $char = $sql[$i];
+
+            // Quoted strings and identifiers: copy up to the matching close quote.
+            if ($char === "'" || $char === '"' || $char === '`') {
+                $end = $i + 1;
+
+                while ($end < $length && $sql[$end] !== $char) {
+                    $end += $sql[$end] === '\\' ? 2 : 1;
+                }
+
+                $current .= substr($sql, $i, $end - $i + 1);
+                $i = $end;
+
+                continue;
+            }
+
+            // -- line comments and /* block comments */
+            if ($char === '-' && ($sql[$i + 1] ?? '') === '-') {
+                $end = strpos($sql, "\n", $i);
+                $end = $end === false ? $length : $end;
+                $current .= substr($sql, $i, $end - $i);
+                $i = $end - 1;
+
+                continue;
+            }
+
+            if ($char === '/' && ($sql[$i + 1] ?? '') === '*') {
+                $end = strpos($sql, '*/', $i + 2);
+                $end = $end === false ? $length : $end + 2;
+                $current .= substr($sql, $i, $end - $i);
+                $i = $end - 1;
+
+                continue;
+            }
+
+            // PostgreSQL dollar quoting: $$ ... $$ or $tag$ ... $tag$.
+            if ($char === '$' && preg_match('/\G\$([A-Za-z_][A-Za-z0-9_]*)?\$/', $sql, $m, 0, $i)) {
+                $end = strpos($sql, $m[0], $i + strlen($m[0]));
+                $end = $end === false ? $length : $end + strlen($m[0]);
+                $current .= substr($sql, $i, $end - $i);
+                $i = $end - 1;
+
+                continue;
+            }
+
+            if ($char === ';') {
+                if (trim($current) !== '') {
+                    $statements[] = trim($current);
+                }
+
+                $current = '';
+
+                continue;
+            }
+
+            $current .= $char;
+        }
+
+        if (trim($current) !== '') {
+            $statements[] = trim($current);
+        }
+
+        return $statements;
+    }
+
+    /**
      * Split on top-level commas, ignoring commas inside parentheses or string literals.
      *
      * @return list<string>

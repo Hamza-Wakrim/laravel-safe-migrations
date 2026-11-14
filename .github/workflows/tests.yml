@@ -7,7 +7,7 @@ on:
 
 jobs:
   tests:
-    name: PHP ${{ matrix.php }} / Laravel ${{ matrix.laravel }}
+    name: PHP ${{ matrix.php }} / Laravel ${{ matrix.laravel }} (${{ matrix.dependencies }})
     runs-on: ubuntu-latest
 
     strategy:
@@ -15,11 +15,21 @@ jobs:
       matrix:
         php: ["8.2", "8.3", "8.4"]
         laravel: ["12.*", "13.*"]
+        dependencies: [highest]
         include:
           - laravel: "12.*"
             testbench: "10.*"
           - laravel: "13.*"
             testbench: "11.*"
+          # Oldest versions Composer allows, to catch use of newer framework APIs.
+          - php: "8.2"
+            laravel: "12.*"
+            testbench: "10.*"
+            dependencies: lowest
+          - php: "8.3"
+            laravel: "13.*"
+            testbench: "11.*"
+            dependencies: lowest
         exclude:
           - php: "8.2"
             laravel: "13.*"
@@ -66,7 +76,10 @@ jobs:
       - name: Install dependencies
         run: |
           composer require "illuminate/console:${{ matrix.laravel }}" "illuminate/database:${{ matrix.laravel }}" "illuminate/support:${{ matrix.laravel }}" "orchestra/testbench:${{ matrix.testbench }}" --no-interaction --no-update
-          composer update --prefer-dist --no-interaction --no-progress --with-all-dependencies
+          composer update --prefer-dist --no-interaction --no-progress --with-all-dependencies ${{ matrix.dependencies == 'lowest' && '--prefer-lowest --prefer-stable' || '' }}
+
+      - name: Static analysis
+        run: vendor/bin/phpstan analyse --no-progress --memory-limit=1G
 
       - name: Run tests
         run: vendor/bin/phpunit

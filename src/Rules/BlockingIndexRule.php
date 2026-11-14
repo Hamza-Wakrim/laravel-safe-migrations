@@ -32,9 +32,13 @@ final class BlockingIndexRule implements Rule
             return;
         }
 
-        if (! [$table, $clauses] = $statement->alterTable()) {
+        $alter = $statement->alterTable();
+
+        if ($alter === null) {
             return;
         }
+
+        [$table, $clauses] = $alter;
 
         if ($context->isNew($table)) {
             return;

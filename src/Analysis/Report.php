@@ -47,6 +47,7 @@ final class Report implements JsonSerializable
         return $grouped;
     }
 
+    /** @return array<string, mixed> */
     public function jsonSerialize(): array
     {
         return [

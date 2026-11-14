@@ -131,6 +131,96 @@ final class CommandsTest extends TestCase
         $this->assertFalse(Schema::hasColumn('users', 'legacy'));
     }
 
+    public function test_check_never_touches_other_connections_used_by_a_migration(): void
+    {
+        $secondary = Schema::connection('secondary');
+        $secondary->create('events', function (Blueprint $t) {
+            $t->id();
+            $t->string('legacy')->nullable();
+        });
+
+        $this->artisan('safe-migrations:check', ['--path' => $this->fixture('multi'), '--realpath' => true])
+            ->expectsOutputToContain('[drop-column] Dropping column [events.legacy]')
+            ->assertFailed();
+
+        $this->assertFalse($secondary->hasTable('audit_log'), 'The dry run created a table on the secondary connection.');
+        $this->assertTrue($secondary->hasColumn('events', 'legacy'), 'The dry run dropped a column on the secondary connection.');
+        $this->assertFalse(Schema::hasTable('teams'));
+    }
+
+    public function test_a_migration_that_fails_in_the_dry_run_is_reported_as_a_warning(): void
+    {
+        $args = ['--path' => $this->fixture('failing'), '--realpath' => true];
+
+        $this->artisan('safe-migrations:check', $args)
+            ->expectsOutputToContain('[analysis-failed] Could not dry-run this migration')
+            ->assertSuccessful();
+
+        $this->artisan('safe-migrations:check', $args + ['--strict' => true])->assertFailed();
+    }
+
+    public function test_analysis_failed_can_be_configured_like_other_rules(): void
+    {
+        $args = ['--path' => $this->fixture('failing'), '--realpath' => true, '--strict' => true];
+
+        config(['safe-migrations.rules.analysis-failed' => false]);
+        $this->app->forgetInstance(\HamzaWakrim\SafeMigrations\Analysis\Analyzer::class);
+        $this->artisan('safe-migrations:check', $args)->assertSuccessful();
+
+        config(['safe-migrations.rules.analysis-failed' => 'error']);
+        $this->app->forgetInstance(\HamzaWakrim\SafeMigrations\Analysis\Analyzer::class);
+        $this->artisan('safe-migrations:check', ['--path' => $this->fixture('failing'), '--realpath' => true])->assertFailed();
+    }
+
+    public function test_raw_sql_through_db_statement_is_checked(): void
+    {
+        $this->assertSame(['drop-column'], $this->rulesFor('raw-statement'));
+        $this->assertTrue(Schema::hasColumn('users', 'legacy'));
+    }
+
+    public function test_every_statement_in_db_unprepared_is_checked(): void
+    {
+        $this->assertSame(['data-mutation', 'drop-column'], $this->rulesFor('raw-unprepared'));
+        $this->assertTrue(Schema::hasColumn('users', 'legacy'));
+    }
+
+    public function test_sql_sent_straight_to_pdo_is_blocked_and_reported(): void
+    {
+        $report = $this->reportFor('raw-pdo');
+
+        $this->assertSame('analysis-failed', $report['findings'][0]['rule']);
+        $this->assertStringContainsString('PDO connection directly', $report['findings'][0]['message']);
+        $this->assertTrue(Schema::hasColumn('users', 'legacy'), 'SQL sent to PDO ran for real during the dry run.');
+
+        // The real PDO is restored afterwards, so the app keeps working.
+        $this->artisan('migrate', ['--path' => $this->fixture('raw-pdo'), '--realpath' => true])->assertSuccessful();
+        $this->assertFalse(Schema::hasColumn('users', 'legacy'));
+    }
+
+    /** @return list<string> */
+    private function rulesFor(string $fixture): array
+    {
+        $rules = array_column($this->reportFor($fixture)['findings'], 'rule');
+        sort($rules);
+
+        return $rules;
+    }
+
+    /** @return array<string, mixed> */
+    private function reportFor(string $fixture): array
+    {
+        Artisan::call('safe-migrations:check', ['--path' => $this->fixture($fixture), '--realpath' => true, '--format' => 'json']);
+
+        return json_decode(Artisan::output(), true, flags: JSON_THROW_ON_ERROR);
+    }
+
+    public function test_invalid_format_is_rejected(): void
+    {
+        $this->artisan('safe-migrations:check', ['--path' => $this->fixture('safe'), '--realpath' => true, '--format' => 'xml'])
+            ->expectsOutputToContain('Invalid --format')
+            ->assertExitCode(2);
+    }
+
     public function test_migrate_safe_unsafe_still_works_with_guard_on(): void
     {
         config(['safe-migrations.guard.enabled' => true, 'safe-migrations.guard.environments' => ['testing']]);

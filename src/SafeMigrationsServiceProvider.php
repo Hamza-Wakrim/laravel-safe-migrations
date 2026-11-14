@@ -23,7 +23,8 @@ class SafeMigrationsServiceProvider extends ServiceProvider
             $app['migrator'],
             $app['db'],
             $app->make(Analyzer::class),
-            (array) $app['config']->get('safe-migrations.ignore_migrations', []),
+            array_values((array) $app['config']->get('safe-migrations.ignore_migrations', [])),
+            array_keys((array) $app['config']->get('database.connections', [])),
         ));
     }
 
@@ -39,7 +40,7 @@ class SafeMigrationsServiceProvider extends ServiceProvider
 
         $this->commands([CheckCommand::class, MigrateSafeCommand::class]);
 
-        $this->app['events']->listen(CommandStarting::class, fn (CommandStarting $event) => $this->guardMigrateCommand($event));
+        $this->app->make('events')->listen(CommandStarting::class, fn (CommandStarting $event) => $this->guardMigrateCommand($event));
     }
 
     /**
@@ -47,7 +48,7 @@ class SafeMigrationsServiceProvider extends ServiceProvider
      */
     protected function guardMigrateCommand(CommandStarting $event): void
     {
-        $config = (array) $this->app['config']->get('safe-migrations.guard', []);
+        $config = (array) $this->app->make('config')->get('safe-migrations.guard', []);
 
         if ($event->command !== 'migrate'
             || ! filter_var($config['enabled'] ?? false, FILTER_VALIDATE_BOOL)
@@ -62,7 +63,7 @@ class SafeMigrationsServiceProvider extends ServiceProvider
         if (is_string($path) && $path !== '') {
             $paths = [$event->input->hasParameterOption('--realpath') ? $path : $this->app->basePath($path)];
         } else {
-            $paths = array_merge($this->app['migrator']->paths(), [$this->app->databasePath('migrations')]);
+            $paths = array_values(array_merge($this->app->make('migrator')->paths(), [$this->app->databasePath('migrations')]));
         }
 
         $database = $event->input->getParameterOption('--database', null);
