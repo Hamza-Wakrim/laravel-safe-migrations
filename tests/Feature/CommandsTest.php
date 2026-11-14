@@ -172,6 +172,48 @@ final class CommandsTest extends TestCase
         $this->artisan('safe-migrations:check', ['--path' => $this->fixture('failing'), '--realpath' => true])->assertFailed();
     }
 
+    public function test_raw_sql_through_db_statement_is_checked(): void
+    {
+        $this->assertSame(['drop-column'], $this->rulesFor('raw-statement'));
+        $this->assertTrue(Schema::hasColumn('users', 'legacy'));
+    }
+
+    public function test_every_statement_in_db_unprepared_is_checked(): void
+    {
+        $this->assertSame(['data-mutation', 'drop-column'], $this->rulesFor('raw-unprepared'));
+        $this->assertTrue(Schema::hasColumn('users', 'legacy'));
+    }
+
+    public function test_sql_sent_straight_to_pdo_is_blocked_and_reported(): void
+    {
+        $report = $this->reportFor('raw-pdo');
+
+        $this->assertSame('analysis-failed', $report['findings'][0]['rule']);
+        $this->assertStringContainsString('PDO connection directly', $report['findings'][0]['message']);
+        $this->assertTrue(Schema::hasColumn('users', 'legacy'), 'SQL sent to PDO ran for real during the dry run.');
+
+        // The real PDO is restored afterwards, so the app keeps working.
+        $this->artisan('migrate', ['--path' => $this->fixture('raw-pdo'), '--realpath' => true])->assertSuccessful();
+        $this->assertFalse(Schema::hasColumn('users', 'legacy'));
+    }
+
+    /** @return list<string> */
+    private function rulesFor(string $fixture): array
+    {
+        $rules = array_column($this->reportFor($fixture)['findings'], 'rule');
+        sort($rules);
+
+        return $rules;
+    }
+
+    /** @return array<string, mixed> */
+    private function reportFor(string $fixture): array
+    {
+        Artisan::call('safe-migrations:check', ['--path' => $this->fixture($fixture), '--realpath' => true, '--format' => 'json']);
+
+        return json_decode(Artisan::output(), true, flags: JSON_THROW_ON_ERROR);
+    }
+
     public function test_invalid_format_is_rejected(): void
     {
         $this->artisan('safe-migrations:check', ['--path' => $this->fixture('safe'), '--realpath' => true, '--format' => 'xml'])

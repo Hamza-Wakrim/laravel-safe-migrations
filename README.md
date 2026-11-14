@@ -64,6 +64,19 @@ Because it reads the SQL and not your PHP code, it also catches `DB::statement(.
 
 **Every** configured database connection is in pretend mode during the check, so a migration that also uses `Schema::connection('analytics')` or `DB::connection('tenant')` is analysed too, and nothing runs on those databases either.
 
+### Raw SQL
+
+Raw queries are checked the same way as schema builder calls, because the rules read the SQL:
+
+| In your migration | What happens |
+| --- | --- |
+| `DB::statement('ALTER TABLE users DROP COLUMN x')` | Checked like any other statement (here: `drop-column`) |
+| `DB::unprepared('...; ...; ...')` | Split into separate statements, and each one is checked |
+| `DB::table('users')->update(['x' => DB::raw('...')])` | Checked (here: `data-mutation` if there is no `WHERE`) |
+| `DB::getPdo()->exec('...')` or other direct PDO calls | **Blocked**, never executed, and reported as `analysis-failed` so you review it by hand |
+
+PostgreSQL function bodies (`$$ ... $$`) are kept whole, so statements inside a `CREATE FUNCTION` are not reported as if they ran during the migration.
+
 Tables that are **created in the same batch** of pending migrations are never flagged. They hold no production data yet, so adding indexes or dropping columns on them is harmless.
 
 ## Requirements

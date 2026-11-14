@@ -12,6 +12,7 @@ use HamzaWakrim\SafeMigrations\Analysis\Report;
 use HamzaWakrim\SafeMigrations\Analysis\Severity;
 use HamzaWakrim\SafeMigrations\Analysis\Statement;
 use HamzaWakrim\SafeMigrations\Attributes\AllowUnsafe;
+use HamzaWakrim\SafeMigrations\Support\DryRunPdo;
 use Throwable;
 
 /**
@@ -144,13 +145,39 @@ final class MigrationInspector
             };
         }
 
-        $run();
+        // Pretend mode does not cover code that uses PDO directly, so put a
+        // guard in front of every PDO until the dry run is over.
+        $originals = [];
+
+        foreach ($connections as $id => $connection) {
+            $originals[$id] = [$connection->getRawPdo(), $connection->getRawReadPdo()];
+
+            if ($originals[$id][0] !== null) {
+                $connection->setPdo(new DryRunPdo($originals[$id][0]));
+            }
+
+            if ($originals[$id][1] !== null) {
+                $connection->setReadPdo(new DryRunPdo($originals[$id][1]));
+            }
+        }
+
+        try {
+            $run();
+        } finally {
+            foreach ($connections as $id => $connection) {
+                $connection->setPdo($originals[$id][0]);
+                $connection->setReadPdo($originals[$id][1]);
+            }
+        }
 
         $statements = [];
 
         foreach ($connections as $id => $connection) {
             foreach ($logs[$id] ?? [] as $query) {
-                $statements[] = new Statement($query['query'], $connection->getDriverName(), $name);
+                // DB::unprepared() can carry several statements in one string; check each one.
+                foreach (Statement::splitStatements($query['query']) as $sql) {
+                    $statements[] = new Statement($sql, $connection->getDriverName(), $name);
+                }
             }
         }
 

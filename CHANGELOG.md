@@ -7,6 +7,8 @@ All notable changes to this project are documented here. The format follows [Kee
 ### Fixed
 
 - **The dry run could change other databases.** When a migration also used another connection (`Schema::connection('other')`, `DB::connection('other')`), those statements ran for real during `safe-migrations:check`, `migrate:safe` and the guard. Every configured connection is now in pretend mode during the check, and statements on other connections are analysed too.
+- **Raw SQL sent straight to PDO ran during the dry run.** `DB::getPdo()->exec(...)` bypasses Laravel's pretend mode. During the check every connection now gets a guard PDO that blocks such calls, and the migration is reported as `analysis-failed`.
+- `DB::unprepared()` with several statements in one string only had its first statement checked. Each statement is now checked (PostgreSQL `$$` function bodies are kept whole).
 - Avoid passing `null` to `Migrator::usingConnection()` when no `--database` is given.
 
 ### Added
