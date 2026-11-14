@@ -1,7 +1,8 @@
 # Laravel Safe Migrations
 
-[![Tests](https://github.com/Hamza-Wakrim/laravel-safe-migrations/actions/workflows/tests.yml/badge.svg)](https://github.com/Hamza-Wakrim/laravel-safe-migrations/actions/workflows/tests.yml)
 [![Latest Version](https://img.shields.io/packagist/v/hamza-wakrim/laravel-safe-migrations.svg)](https://packagist.org/packages/hamza-wakrim/laravel-safe-migrations)
+[![PHP Version](https://img.shields.io/packagist/dependency-v/hamza-wakrim/laravel-safe-migrations/php.svg)](https://packagist.org/packages/hamza-wakrim/laravel-safe-migrations)
+[![Laravel](https://img.shields.io/badge/Laravel-12%20%7C%2013-FF2D20.svg)](https://laravel.com)
 [![License](https://img.shields.io/github/license/Hamza-Wakrim/laravel-safe-migrations.svg)](LICENSE)
 
 **Find dangerous migrations before they reach production.**
@@ -29,13 +30,26 @@ This package finds those problems **before** you run `migrate`. It dry-runs your
    ERROR  Checked 2 migration(s): 1 error(s), 1 warning(s).
 ```
 
+**The check never changes your database.** It doesn't create tables, add columns or even the `migrations` table, on any of your connections. Code that tries to bypass Laravel and talk to the database directly is blocked, not run.
+
+**Try it in 30 seconds:**
+
+```bash
+composer require hamza-wakrim/laravel-safe-migrations
+php artisan safe-migrations:check
+```
+
+> **Using 1.0.0 or 1.0.1?** Please [upgrade to 1.0.2](#upgrading). In those versions the dry run could run statements for real when a migration used a second database connection or sent SQL straight to PDO.
+
 ---
 
 ## Contents
 
 1. [How it works](#how-it-works)
+   - [Raw SQL](#raw-sql)
 2. [Requirements](#requirements)
 3. [Installation](#installation)
+   - [Upgrading](#upgrading)
 4. [Quick start](#quick-start)
 5. [The three ways to use it](#the-three-ways-to-use-it)
    - [A. Check before you merge (CI)](#a-check-before-you-merge-ci)
@@ -47,9 +61,11 @@ This package finds those problems **before** you run `migrate`. It dry-runs your
 9. [Configuration reference](#configuration-reference)
 10. [Command reference](#command-reference)
 11. [JSON output](#json-output)
-12. [Limitations](#limitations)
-13. [Troubleshooting](#troubleshooting)
-14. [Developing this package](#developing-this-package)
+12. [FAQ](#faq)
+13. [Limitations](#limitations)
+14. [Troubleshooting](#troubleshooting)
+15. [Developing this package](#developing-this-package)
+16. [Contributing](#contributing)
 
 ---
 
@@ -61,6 +77,8 @@ This package finds those problems **before** you run `migrate`. It dry-runs your
 4. Every problem is reported with the migration name, the SQL, an explanation and a suggested fix.
 
 Because it reads the SQL and not your PHP code, it also catches `DB::statement(...)`, `DB::table(...)->update(...)` and anything else your migration executes.
+
+Tables that are **created in the same batch** of pending migrations are never flagged. They hold no production data yet, so adding indexes or dropping columns on them is harmless.
 
 **Every** configured database connection is in pretend mode during the check, so a migration that also uses `Schema::connection('analytics')` or `DB::connection('tenant')` is analysed too, and nothing runs on those databases either.
 
@@ -76,8 +94,6 @@ Raw queries are checked the same way as schema builder calls, because the rules 
 | `DB::getPdo()->exec('...')` or other direct PDO calls | **Blocked**, never executed, and reported as `analysis-failed` so you review it by hand |
 
 PostgreSQL function bodies (`$$ ... $$`) are kept whole, so statements inside a `CREATE FUNCTION` are not reported as if they ran during the migration.
-
-Tables that are **created in the same batch** of pending migrations are never flagged. They hold no production data yet, so adding indexes or dropping columns on them is harmless.
 
 ## Requirements
 
@@ -121,6 +137,18 @@ php artisan vendor:publish --tag=safe-migrations-config
 ```
 
 This creates `config/safe-migrations.php`.
+
+### Upgrading
+
+Within 1.x there are no breaking changes, so updating is one command:
+
+```bash
+composer update hamza-wakrim/laravel-safe-migrations
+```
+
+If you published the config file, you can optionally add `'analysis-failed' => null,` to its `rules` array (new in 1.0.2). Without it the rule keeps its default severity (warning).
+
+See the [changelog](CHANGELOG.md) for what changed in each version.
 
 ## Quick start
 
@@ -628,10 +656,37 @@ Runs the check, then `migrate` if it passes.
 
 Use it to post a comment on a pull request or feed another tool.
 
+## FAQ
+
+**Will running the check change my database?**
+No. Every database connection is in pretend mode during the check, so nothing is created, changed or deleted, not even the `migrations` table. Migrations that try to bypass this by using PDO directly are blocked and reported. This is covered by tests on real MySQL and PostgreSQL servers.
+
+**Does it work with raw queries?**
+Yes. It reads the SQL your migration would run, so `DB::statement()`, `DB::unprepared()` (every statement in the string) and query builder calls with `DB::raw()` are all checked. Direct PDO calls (`DB::getPdo()->exec(...)`) are blocked and reported for review. See [Raw SQL](#raw-sql).
+
+**My migration uses more than one database. Is that handled?**
+Yes. Statements sent through `Schema::connection('other')` or `DB::connection('other')` are checked with that connection's database rules, and never executed.
+
+**Does it check migrations that already ran?**
+No, only pending ones, which is what matters for the next deploy. Use `--all` to check every migration file.
+
+**Will it slow down my deploy?**
+Hardly. Nothing is executed, so checking a handful of pending migrations takes well under a second.
+
+**Can I use it with my local SQLite but production PostgreSQL?**
+You can, but some rules only apply to one database engine (for example, index locking on PostgreSQL). For the most useful results, run the check against the same kind of database you use in production, for example with `--database=pgsql`.
+
+**Something is flagged, but I know it's fine. What do I do?**
+Add `#[AllowUnsafe('rule-name', reason: '...')]` to that migration. The reason stays next to the code for whoever reviews it. See [When a finding is intentional](#when-a-finding-is-intentional).
+
+**Does it check `down()`?**
+No, only `up()`, since that is what runs during a deploy.
+
 ## Limitations
 
 - **Pretend mode returns no data.** During the dry run, `select` queries return nothing. A migration that does `if (Schema::hasColumn(...))` or reads rows to decide what to do is checked along the path it takes when those checks come back empty. If the dry run throws an exception, the migration is reported as an `analysis-failed` warning so you can review it by hand.
 - **It can't know your table sizes.** Warnings describe what *can* lock; on a table with 200 rows it doesn't matter. Use your judgement, and `#[AllowUnsafe]` once you've checked.
+- **Direct PDO calls are blocked, not analysed.** The check can't see what `DB::getPdo()->exec(...)` would do, so it stops the call and reports the migration as `analysis-failed`. Anything after that call in the same migration is not checked. Prefer `DB::statement()`, which is checked.
 - **Only `up()` is checked**, not `down()`.
 - **SQL Server is not supported.**
 - The guard reads only the first `--path` given to `migrate`.
@@ -673,6 +728,12 @@ docker compose down
 Without Docker, `composer install && vendor/bin/phpunit` runs the SQLite tests and skips MySQL and PostgreSQL.
 
 To add a rule: implement `HamzaWakrim\SafeMigrations\Rules\Rule`, add it to `Analyzer::defaultRules()`, add its id to `config/safe-migrations.php`, and add cases to both test files.
+
+## Contributing
+
+Bug reports, ideas for new rules and pull requests are welcome on [GitHub](https://github.com/Hamza-Wakrim/laravel-safe-migrations/issues).
+
+When reporting a false positive or a missed problem, please include the migration code and your database (MySQL, PostgreSQL or SQLite, and its version). For pull requests, run `docker compose run --rm tests` and `docker compose run --rm tests composer analyse` first.
 
 ## License
 
