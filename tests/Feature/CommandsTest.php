@@ -190,6 +190,7 @@ final class CommandsTest extends TestCase
 
         $this->assertSame('analysis-failed', $report['findings'][0]['rule']);
         $this->assertStringContainsString('PDO connection directly', $report['findings'][0]['message']);
+        $this->assertStringContainsString('DB::statement()', $report['findings'][0]['suggestion']);
         $this->assertTrue(Schema::hasColumn('users', 'legacy'), 'SQL sent to PDO ran for real during the dry run.');
 
         // The real PDO is restored afterwards, so the app keeps working.

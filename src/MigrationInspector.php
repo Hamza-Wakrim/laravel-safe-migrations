@@ -12,6 +12,7 @@ use HamzaWakrim\SafeMigrations\Analysis\Report;
 use HamzaWakrim\SafeMigrations\Analysis\Severity;
 use HamzaWakrim\SafeMigrations\Analysis\Statement;
 use HamzaWakrim\SafeMigrations\Attributes\AllowUnsafe;
+use HamzaWakrim\SafeMigrations\Exceptions\DirectPdoAccessException;
 use HamzaWakrim\SafeMigrations\Support\DryRunPdo;
 use Throwable;
 
@@ -70,7 +71,9 @@ final class MigrationInspector
                             'analysis-failed',
                             $severity,
                             'Could not dry-run this migration: '.$e->getMessage(),
-                            'Migrations that read data (e.g. if (Schema::hasColumn(...))) cannot be fully analysed in pretend mode. Review it manually.',
+                            $e instanceof DirectPdoAccessException
+                                ? 'Run the SQL through DB::statement() or DB::unprepared() instead of the PDO object, so it can be checked. Otherwise review it manually.'
+                                : 'Migrations that read data (e.g. if (Schema::hasColumn(...))) cannot be fully analysed in pretend mode. Review it manually.',
                             migration: $name,
                         );
                     }
