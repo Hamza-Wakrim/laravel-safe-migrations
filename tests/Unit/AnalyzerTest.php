@@ -51,6 +51,14 @@ final class AnalyzerTest extends TestCase
             'pgsql raw foreign key not valid (README recipe)' => ['pgsql', 'ALTER TABLE posts ADD CONSTRAINT posts_user_id_foreign FOREIGN KEY (user_id) REFERENCES users (id) NOT VALID', []],
             'insert is fine' => ['mysql', 'insert into `users` (`name`) values (?)', []],
             'create table is fine' => ['mysql', 'create table `teams` (`id` bigint unsigned not null auto_increment primary key)', []],
+            'line comment before statement' => ['mysql', "-- clean up\nALTER TABLE users DROP COLUMN legacy", ['drop-column']],
+            'block comment before statement' => ['pgsql', '/* old logs */ DROP TABLE logs', ['drop-table']],
+            'line comment inside statement' => ['mysql', "ALTER TABLE users -- note\n DROP COLUMN a", ['drop-column']],
+            'block comment inside statement' => ['pgsql', 'ALTER TABLE users /* x */ DROP COLUMN b', ['drop-column']],
+            'comment between clauses' => ['mysql', "ALTER TABLE users DROP COLUMN a, -- and\n DROP COLUMN b", ['drop-column', 'drop-column']],
+            'comment inside table name quotes is kept' => ['pgsql', 'DROP TABLE "a--b"', ['drop-table']],
+            'mysql executable comment is checked' => ['mysql', '/*!40000 DROP TABLE logs */', ['drop-table']],
+            'commented-out statement is ignored' => ['mysql', '-- DROP TABLE users', []],
         ];
     }
 
@@ -113,6 +121,15 @@ final class AnalyzerTest extends TestCase
             ["UPDATE users SET bio = 'a; b'", 'ALTER TABLE "x;y" DROP COLUMN z', '/* note; */ DELETE FROM logs'],
             Statement::splitStatements("UPDATE users SET bio = 'a; b'; ALTER TABLE \"x;y\" DROP COLUMN z;\n/* note; */ DELETE FROM logs;"),
         );
+    }
+
+    public function test_comments_are_stripped_but_strings_are_kept(): void
+    {
+        $this->assertSame(
+            "UPDATE t SET a = '-- not a comment /* nor this */'",
+            trim(Statement::stripComments("UPDATE t SET a = '-- not a comment /* nor this */' -- real comment")),
+        );
+        $this->assertSame('drop table a--b', (new Statement('/* x */ DROP TABLE "a--b"', 'pgsql'))->normalized);
     }
 
     public function test_postgres_function_bodies_are_not_split(): void

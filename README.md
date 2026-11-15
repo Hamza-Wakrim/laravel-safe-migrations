@@ -95,6 +95,8 @@ Raw queries are checked the same way as schema builder calls, because the rules 
 
 PostgreSQL function bodies (`$$ ... $$`) are kept whole, so statements inside a `CREATE FUNCTION` are not reported as if they ran during the migration.
 
+SQL comments (`-- ...` and `/* ... */`) are ignored, so a comment before or inside a statement cannot hide it from the check, and a commented-out statement is not reported. Comment markers inside quoted strings are left alone, and MySQL executable comments (`/*!40000 ... */`) are checked as SQL, because MySQL runs them.
+
 ## Requirements
 
 - PHP 8.2 or newer
@@ -662,7 +664,7 @@ Use it to post a comment on a pull request or feed another tool.
 No. Every database connection is in pretend mode during the check, so nothing is created, changed or deleted, not even the `migrations` table. Migrations that try to bypass this by using PDO directly are blocked and reported. This is covered by tests on real MySQL and PostgreSQL servers.
 
 **Does it work with raw queries?**
-Yes. It reads the SQL your migration would run, so `DB::statement()`, `DB::unprepared()` (every statement in the string) and query builder calls with `DB::raw()` are all checked. Direct PDO calls (`DB::getPdo()->exec(...)`) are blocked and reported for review. See [Raw SQL](#raw-sql).
+Yes. It reads the SQL your migration would run, so `DB::statement()`, `DB::unprepared()` (every statement in the string) and query builder calls with `DB::raw()` are all checked, including SQL with comments in it. Direct PDO calls (`DB::getPdo()->exec(...)`) are blocked and reported for review. See [Raw SQL](#raw-sql).
 
 **My migration uses more than one database. Is that handled?**
 Yes. Statements sent through `Schema::connection('other')` or `DB::connection('other')` are checked with that connection's database rules, and never executed.
