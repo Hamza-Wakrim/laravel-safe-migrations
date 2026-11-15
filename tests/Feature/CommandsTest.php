@@ -184,6 +184,13 @@ final class CommandsTest extends TestCase
         $this->assertTrue(Schema::hasColumn('users', 'legacy'));
     }
 
+    public function test_comments_do_not_hide_raw_statements(): void
+    {
+        // The commented-out DROP TABLE is not reported; the two real statements are.
+        $this->assertSame(['data-mutation', 'drop-column'], $this->rulesFor('raw-comments'));
+        $this->assertTrue(Schema::hasColumn('users', 'legacy'));
+    }
+
     public function test_sql_sent_straight_to_pdo_is_blocked_and_reported(): void
     {
         $report = $this->reportFor('raw-pdo');

@@ -2,6 +2,12 @@
 
 All notable changes to this project are documented here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses [Semantic Versioning](https://semver.org/).
 
+## [1.0.4] - 2026-11-15
+
+### Fixed
+
+- **SQL comments could hide a statement from the check.** Raw SQL with a `--` or `/* */` comment before or inside a statement (for example `-- cleanup` followed by `DROP TABLE logs`) was not flagged. Comments are now removed before the rules run. Comment markers inside quoted strings are left alone, a commented-out statement is not reported, and MySQL executable comments (`/*! ... */`) are checked as SQL.
+
 ## [1.0.3] - 2026-11-15
 
 ### Fixed
@@ -41,6 +47,7 @@ All notable changes to this project are documented here. The format follows [Kee
 - Rules: `drop-table`, `drop-column`, `rename-table`, `rename-column`, `add-not-null-column`, `change-column`, `set-not-null`, `blocking-index`, `blocking-foreign-key`, `table-rebuild`, `data-mutation`.
 - Support for MySQL/MariaDB, PostgreSQL and SQLite on Laravel 12 and 13 (PHP 8.2+, Laravel 13 needs PHP 8.3+).
 
+[1.0.4]: https://github.com/Hamza-Wakrim/laravel-safe-migrations/releases/tag/v1.0.4
 [1.0.3]: https://github.com/Hamza-Wakrim/laravel-safe-migrations/releases/tag/v1.0.3
 [1.0.2]: https://github.com/Hamza-Wakrim/laravel-safe-migrations/releases/tag/v1.0.2
 [1.0.1]: https://github.com/Hamza-Wakrim/laravel-safe-migrations/releases/tag/v1.0.1
