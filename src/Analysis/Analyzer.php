@@ -39,6 +39,7 @@ final class Analyzer
             new Rules\ChangeColumnRule,
             new Rules\SetNotNullRule,
             new Rules\BlockingIndexRule,
+            new Rules\ConcurrentInTransactionRule,
             new Rules\BlockingForeignKeyRule,
             new Rules\TableRebuildRule,
             new Rules\DataMutationRule,

@@ -25,6 +25,7 @@ return [
         'change-column' => null,        // warning
         'set-not-null' => null,         // warning  (PostgreSQL)
         'blocking-index' => null,       // warning  (PostgreSQL, CREATE INDEX without CONCURRENTLY)
+        'concurrent-in-transaction' => null, // error (PostgreSQL, CONCURRENTLY inside a transactional migration)
         'blocking-foreign-key' => null, // warning  (PostgreSQL, foreign key without NOT VALID)
         'table-rebuild' => null,        // warning  (SQLite table copy for ->change() etc.)
         'data-mutation' => null,        // warning  (UPDATE / DELETE without WHERE, TRUNCATE)

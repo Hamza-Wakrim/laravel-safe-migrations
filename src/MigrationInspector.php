@@ -134,9 +134,19 @@ final class MigrationInspector
         /** @var array<int, array<int, array{query: string}>> $logs */
         $logs = [];
 
-        $run = function () use ($migration) {
-            if (method_exists($migration, 'up')) {
-                $migration->up();
+        // Like Migrator::runMethod(), make the migration's connection the default
+        // while up() runs, so DB::statement() and friends go where `migrate` sends them.
+        $run = function () use ($migration, $primary) {
+            $previous = $this->connections->getDefaultConnection();
+
+            try {
+                $this->connections->setDefaultConnection($primary->getNameWithReadWriteType());
+
+                if (method_exists($migration, 'up')) {
+                    $migration->up();
+                }
+            } finally {
+                $this->connections->setDefaultConnection($previous);
             }
         };
 
@@ -175,16 +185,39 @@ final class MigrationInspector
 
         $statements = [];
 
+        // Laravel only wraps the migration's own connection in a transaction.
+        $primaryInTransaction = $this->runsInTransaction($migration, $primary);
+
         foreach ($connections as $id => $connection) {
+            $inTransaction = $connection === $primary && $primaryInTransaction;
+
             foreach ($logs[$id] ?? [] as $query) {
                 // DB::unprepared() can carry several statements in one string; check each one.
                 foreach (Statement::splitStatements($query['query']) as $sql) {
-                    $statements[] = new Statement($sql, $connection->getDriverName(), $name);
+                    $statements[] = new Statement($sql, $connection->getDriverName(), $name, $inTransaction);
                 }
             }
         }
 
         return $statements;
+    }
+
+    /**
+     * Mirrors Migrator::runMigration(): the migration runs inside a transaction
+     * when the schema grammar supports transactional DDL and the migration has
+     * not set $withinTransaction = false.
+     */
+    private function runsInTransaction(object $migration, Connection $connection): bool
+    {
+        if (property_exists($migration, 'withinTransaction') && ! $migration->withinTransaction) {
+            return false;
+        }
+
+        if ($connection->getSchemaGrammar() === null) {
+            $connection->useDefaultSchemaGrammar();
+        }
+
+        return (bool) $connection->getSchemaGrammar()?->supportsSchemaTransactions();
     }
 
     /**

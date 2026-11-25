@@ -68,6 +68,37 @@ final class AnalyzerTest extends TestCase
         $this->assertSame($expected, $this->rules([new Statement($sql, $driver, 'm')]));
     }
 
+    /** @return array<string, array{string, string, bool, list<string>}> */
+    public static function concurrentStatements(): array
+    {
+        return [
+            'create index concurrently in transaction' => ['pgsql', 'create index concurrently "users_email_index" on "users" ("email")', true, ['concurrent-in-transaction']],
+            'create unique index concurrently in transaction' => ['pgsql', 'CREATE UNIQUE INDEX CONCURRENTLY IF NOT EXISTS users_email_unique ON users (email)', true, ['concurrent-in-transaction']],
+            'drop index concurrently in transaction' => ['pgsql', 'DROP INDEX CONCURRENTLY IF EXISTS users_email_index', true, ['concurrent-in-transaction']],
+            'reindex concurrently in transaction' => ['pgsql', 'REINDEX INDEX CONCURRENTLY users_email_index', true, ['concurrent-in-transaction']],
+            'detach partition concurrently in transaction' => ['pgsql', 'ALTER TABLE events DETACH PARTITION events_2024 CONCURRENTLY', true, ['concurrent-in-transaction']],
+            'create index concurrently without transaction' => ['pgsql', 'create index concurrently "users_email_index" on "users" ("email")', false, []],
+            'drop index concurrently without transaction' => ['pgsql', 'DROP INDEX CONCURRENTLY users_email_index', false, []],
+            'plain create index in transaction' => ['pgsql', 'create index "users_email_index" on "users" ("email")', true, ['blocking-index']],
+            'refresh materialized view concurrently is allowed' => ['pgsql', 'REFRESH MATERIALIZED VIEW CONCURRENTLY stats', true, []],
+            'concurrently inside a string is ignored' => ['pgsql', "update settings set note = 'create index concurrently' where id = 1", true, []],
+            'not postgres' => ['sqlite', 'create index concurrently users_email_index on users (email)', true, []],
+        ];
+    }
+
+    #[DataProvider('concurrentStatements')]
+    public function test_concurrently_inside_a_transaction_is_flagged(string $driver, string $sql, bool $inTransaction, array $expected): void
+    {
+        $this->assertSame($expected, $this->rules([new Statement($sql, $driver, 'm', $inTransaction)]));
+    }
+
+    public function test_concurrently_inside_a_transaction_is_an_error(): void
+    {
+        $findings = Analyzer::withDefaultRules()->analyze([new Statement('DROP INDEX CONCURRENTLY users_email_index', 'pgsql', 'm', true)]);
+
+        $this->assertSame(Severity::Error, $findings[0]->severity);
+    }
+
     public function test_tables_created_in_the_same_run_are_not_flagged(): void
     {
         $rules = $this->rules([

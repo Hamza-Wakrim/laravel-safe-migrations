@@ -341,6 +341,7 @@ To skip a migration completely (for example, an old one you don't want to touch)
 | [`change-column`](#change-column) | warning | MySQL, PostgreSQL |
 | [`set-not-null`](#set-not-null) | warning | PostgreSQL |
 | [`blocking-index`](#blocking-index) | warning | PostgreSQL |
+| [`concurrent-in-transaction`](#concurrent-in-transaction) | error | PostgreSQL |
 | [`blocking-foreign-key`](#blocking-foreign-key) | warning | PostgreSQL |
 | [`table-rebuild`](#table-rebuild) | warning | SQLite |
 | [`data-mutation`](#data-mutation) | warning | all |
@@ -477,6 +478,26 @@ DB::statement('ALTER TABLE users ADD CONSTRAINT users_email_unique UNIQUE USING 
 
 On MySQL (InnoDB), adding a normal index is an online operation, so this rule does not apply.
 
+### `concurrent-in-transaction`
+
+**Flags (PostgreSQL):** `CREATE INDEX CONCURRENTLY`, `DROP INDEX CONCURRENTLY`, `REINDEX ... CONCURRENTLY` and `DETACH PARTITION ... CONCURRENTLY` in a migration that runs inside a transaction (the default on PostgreSQL).
+
+**Why:** PostgreSQL refuses to run these inside a transaction block, so the migration fails in production. It is easy to miss because the same migration passes on MySQL, which never wraps migrations in a transaction.
+
+**Safe way:** turn the migration's transaction off, and keep the concurrent statement in a migration of its own (without a transaction, a failure halfway leaves the earlier statements applied):
+
+```php
+return new class extends Migration
+{
+    public $withinTransaction = false;
+
+    public function up(): void
+    {
+        DB::statement('CREATE INDEX CONCURRENTLY users_email_index ON users (email)');
+    }
+};
+```
+
 ### `blocking-foreign-key`
 
 **Flags (PostgreSQL):** `$table->foreign(...)` / `->constrained()` on an existing table.
@@ -543,6 +564,7 @@ return [
         'change-column' => null,
         'set-not-null' => null,
         'blocking-index' => null,
+        'concurrent-in-transaction' => null,
         'blocking-foreign-key' => null,
         'table-rebuild' => null,
         'data-mutation' => null,
