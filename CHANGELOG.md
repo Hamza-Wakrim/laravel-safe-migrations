@@ -2,6 +2,12 @@
 
 All notable changes to this project are documented here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Fixed
+
+- **HTTP calls, mail, notifications and jobs in a migration ran during the check.** Pretend mode only stops database statements, but the check runs `up()` for real, so `Http::post(...)`, `Mail::...`, `Notification::...`, `Queue::push(...)` and `dispatch(...)` really happened during `safe-migrations:check`, `migrate:safe` and the guard. They are now swapped for Laravel's fakes while the migration is analysed, and the real services are put back afterwards. Other side effects (files, cache, events, plain PHP) still run; the README lists them under Limitations.
+
 ## [1.1.0] - 2026-11-25
 
 ### Added

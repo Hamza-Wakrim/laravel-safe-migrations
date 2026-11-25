@@ -33,7 +33,7 @@ This package finds those problems **before** you run `migrate`. It dry-runs your
 
 **The check never changes your database.** It doesn't create tables, add columns or even the `migrations` table, on any of your connections. Code that tries to bypass Laravel and talk to the database directly is blocked, not run.
 
-> **Your `up()` code still runs.** Only database statements are intercepted. If a migration also sends HTTP requests, writes files, sends mail, dispatches jobs or writes to the cache, that really happens during the check. Keep migrations to database changes, and move anything else into a command or job. See [Limitations](#limitations).
+> **Your `up()` code still runs.** Database statements are recorded instead of executed, and Laravel's HTTP client, mail, notifications, queue and job dispatching are swapped for fakes during the check, so those don't happen either. Other code, such as file writes (`Storage`), cache writes, events or plain PHP like `file_put_contents()`, really runs. Keep migrations to database changes. See [Limitations](#limitations).
 
 **Try it in 30 seconds:**
 
@@ -700,7 +700,7 @@ Use it to post a comment on a pull request or feed another tool.
 **Will running the check change my database?**
 No. Every database connection is in pretend mode during the check, so nothing is created, changed or deleted, not even the `migrations` table. Migrations that try to bypass this by using PDO directly are blocked and reported. This is covered by tests on real MySQL and PostgreSQL servers.
 
-Other PHP code in `up()` is not intercepted, though: HTTP requests, file writes, mail, queued jobs and cache writes run for real during the check. See [Limitations](#limitations).
+HTTP requests (`Http::`), mail, notifications, queued jobs and `dispatch()` are faked during the check, so they don't happen, and the real services are put back afterwards. Other PHP code in `up()`, such as file or cache writes, is not intercepted and runs for real. See [Limitations](#limitations).
 
 **Does it work with raw queries?**
 Yes. It reads the SQL your migration would run, so `DB::statement()`, `DB::unprepared()` (every statement in the string) and query builder calls with `DB::raw()` are all checked, including SQL with comments in it. Direct PDO calls (`DB::getPdo()->exec(...)`) are blocked and reported for review. See [Raw SQL](#raw-sql).
@@ -725,7 +725,7 @@ No, only `up()`, since that is what runs during a deploy.
 
 ## Limitations
 
-- **Only database statements are intercepted.** The check really runs your migration's `up()` method. Database statements are recorded instead of executed, but other side effects are not: HTTP requests (`Http::post(...)`), files (`Storage::delete(...)`), mail, notifications, queued jobs, events and cache writes all happen for real during the check. Keep migrations to database changes, and put the rest in a command or job.
+- **Not every side effect is intercepted.** The check really runs your migration's `up()` method. Database statements are recorded instead of executed, and Laravel's HTTP client (`Http::`), mail, notifications, queue and job dispatching (`dispatch()`, `Bus::`) are faked, so those don't happen. Everything else does: files (`Storage::delete(...)`), cache writes, events and their listeners, `Artisan::call()`, and PHP code that doesn't go through those Laravel services (for example `curl` or `file_put_contents()`). Keep migrations to database changes, and put the rest in a command or job.
 - **Pretend mode returns no data.** During the dry run, `select` queries return nothing. A migration that does `if (Schema::hasColumn(...))` or reads rows to decide what to do is checked along the path it takes when those checks come back empty. If the dry run throws an exception, the migration is reported as an `analysis-failed` warning so you can review it by hand.
 - **It can't know your table sizes.** Warnings describe what *can* lock; on a table with 200 rows it doesn't matter. Use your judgement, and `#[AllowUnsafe]` once you've checked.
 - **Direct PDO calls are blocked, not analysed.** The check can't see what `DB::getPdo()->exec(...)` would do, so it stops the call and reports the migration as `analysis-failed`. Anything after that call in the same migration is not checked. Prefer `DB::statement()`, which is checked.
@@ -764,6 +764,7 @@ docker compose down
 - `tests/Unit` checks the rules against hand-written SQL.
 - `tests/Feature/GrammarIntegrationTest.php` runs real Laravel schema code through each database's grammar, so the rules are tested against the exact SQL Laravel generates on SQLite, MySQL and PostgreSQL.
 - `tests/Feature/CommandsTest.php` covers the commands, `#[AllowUnsafe]` and the guard.
+- `tests/Feature/SideEffectsTest.php` checks that HTTP calls, mail, notifications and jobs in `up()` don't happen during the check, and that the real services are restored.
 - `tests/Feature/TransactionDetectionTest.php` checks that statements know whether they run inside the migration's transaction, decided the same way as `migrate`.
 - `tests/Feature/RealDatabaseCommandsTest.php` runs the commands end to end on real MySQL and PostgreSQL.
 - `composer analyse` runs Larastan (PHPStan for Laravel) at level 8.

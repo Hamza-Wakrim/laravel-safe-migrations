@@ -14,6 +14,7 @@ use HamzaWakrim\SafeMigrations\Analysis\Statement;
 use HamzaWakrim\SafeMigrations\Attributes\AllowUnsafe;
 use HamzaWakrim\SafeMigrations\Exceptions\DirectPdoAccessException;
 use HamzaWakrim\SafeMigrations\Support\DryRunPdo;
+use HamzaWakrim\SafeMigrations\Support\SideEffectFakes;
 use Throwable;
 
 /**
@@ -140,7 +141,7 @@ final class MigrationInspector
             $previous = $this->connections->getDefaultConnection();
 
             try {
-                $this->connections->setDefaultConnection($primary->getNameWithReadWriteType());
+                $this->connections->setDefaultConnection($primary->getNameWithReadWriteType() ?? $previous);
 
                 if (method_exists($migration, 'up')) {
                     $migration->up();
@@ -175,7 +176,8 @@ final class MigrationInspector
         }
 
         try {
-            $run();
+            // Pretend mode only covers the database; fake HTTP, mail, notifications and jobs too.
+            SideEffectFakes::around($run);
         } finally {
             foreach ($connections as $id => $connection) {
                 $connection->setPdo($originals[$id][0]);
@@ -213,11 +215,16 @@ final class MigrationInspector
             return false;
         }
 
-        if ($connection->getSchemaGrammar() === null) {
+        // Like Migrator::getSchemaGrammar(): the grammar is set lazily, despite its non-null docblock.
+        /** @var \Illuminate\Database\Schema\Grammars\Grammar|null $grammar */
+        $grammar = $connection->getSchemaGrammar();
+
+        if ($grammar === null) {
             $connection->useDefaultSchemaGrammar();
+            $grammar = $connection->getSchemaGrammar();
         }
 
-        return (bool) $connection->getSchemaGrammar()?->supportsSchemaTransactions();
+        return $grammar->supportsSchemaTransactions();
     }
 
     /**
