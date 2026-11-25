@@ -14,6 +14,8 @@ final class Statement
         public readonly string $sql,
         public readonly string $driver,
         public readonly ?string $migration = null,
+        /** Whether Laravel runs this statement inside the migration's transaction. */
+        public readonly bool $inTransaction = false,
     ) {
         $this->normalized = self::normalize($sql);
     }

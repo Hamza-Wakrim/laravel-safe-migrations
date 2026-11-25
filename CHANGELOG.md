@@ -2,6 +2,16 @@
 
 All notable changes to this project are documented here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Added
+
+- **`concurrent-in-transaction` rule (PostgreSQL, error).** Flags `CREATE INDEX CONCURRENTLY`, `DROP INDEX CONCURRENTLY`, `REINDEX ... CONCURRENTLY` and `DETACH PARTITION ... CONCURRENTLY` in a migration that Laravel runs inside a transaction. PostgreSQL rejects these statements there, so the migration would fail in production. The fix is `public $withinTransaction = false;`. Rules can now see whether a statement runs inside the migration's transaction (`Statement::$inTransaction`), decided the same way Laravel's migrator does.
+
+### Fixed
+
+- **Raw SQL in a migration with its own `$connection` was checked against the wrong database.** `migrate` makes the migration's connection the default while `up()` runs, so `DB::statement()` goes there. The dry run did not, so such statements were checked with the default connection's rules (for example as SQLite instead of PostgreSQL). The dry run now switches the default connection the same way.
+
 ## [1.0.4] - 2026-11-15
 
 ### Fixed
