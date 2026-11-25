@@ -12,6 +12,7 @@ Some migrations look harmless but take your app down when they run on a busy pro
 - dropping or renaming a column that the old code (still running during the deploy) is reading,
 - adding a `NOT NULL` column to a table that already has rows,
 - building an index on PostgreSQL, which blocks every write to the table until it finishes,
+- using `CREATE INDEX CONCURRENTLY` in a migration that runs inside a transaction, which PostgreSQL rejects,
 - an `UPDATE` without a `WHERE` that rewrites millions of rows in one transaction.
 
 This package finds those problems **before** you run `migrate`. It dry-runs your pending migrations, looks at the SQL they would execute, and tells you what is risky, why, and how to do it safely.
@@ -148,7 +149,14 @@ Within 1.x there are no breaking changes, so updating is one command:
 composer update hamza-wakrim/laravel-safe-migrations
 ```
 
-If you published the config file, you can optionally add `'analysis-failed' => null,` to its `rules` array (new in 1.0.2). Without it the rule keeps its default severity (warning).
+If you published the config file, you can optionally add the rules added since 1.0.0 to its `rules` array:
+
+```php
+'analysis-failed' => null,            // new in 1.0.2, warning
+'concurrent-in-transaction' => null,  // new in 1.1.0, error (PostgreSQL)
+```
+
+Without them each rule keeps its default severity.
 
 See the [changelog](CHANGELOG.md) for what changed in each version.
 
