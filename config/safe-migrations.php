@@ -31,6 +31,10 @@ return [
         'data-mutation' => null,        // warning  (UPDATE / DELETE without WHERE, TRUNCATE)
         'analysis-failed' => null,      // warning  (the migration threw an error during the dry run)
         'lock-timeout' => null,         // off unless set to 'warning' or 'error' (ALTER without a lock timeout)
+        'unsafe-rollback' => null,      // warning  (down() breaks something that existed before up())
+        'missing-down' => null,         // off unless set to 'warning' or 'error' (no down(), or it does nothing)
+        'schema-condition' => null,     // warning  (branch on Schema::hasColumn() etc. the dry run skipped)
+        'reads-data' => null,           // warning  (up() reads rows: DB::table()->get(), User::all(), ...)
     ],
 
     /*

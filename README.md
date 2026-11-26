@@ -33,7 +33,7 @@ This package finds those problems **before** you run `migrate`. It dry-runs your
 
 **The check never changes your database.** It doesn't create tables, add columns or even the `migrations` table, on any of your connections. Code that tries to bypass Laravel and talk to the database directly is blocked, not run.
 
-> **Your `up()` code still runs.** Database statements are recorded instead of executed, and Laravel's HTTP client, mail, notifications, queue and job dispatching are swapped for fakes during the check, so those don't happen either. Other code, such as file writes (`Storage`), cache writes, events or plain PHP like `file_put_contents()`, really runs. Keep migrations to database changes. See [Limitations](#limitations).
+> **Your `up()` and `down()` code still runs.** Database statements are recorded instead of executed, and Laravel's HTTP client, mail, notifications, queue, jobs, events, cache, storage, processes and `Artisan::call()` are swapped for fakes during the check, so those don't happen either. Plain PHP that doesn't go through Laravel, like `file_put_contents()` or `curl`, really runs. Keep migrations to database changes. See [Limitations](#limitations).
 
 **Try it in 30 seconds:**
 
@@ -77,9 +77,11 @@ php artisan safe-migrations:check
 1. It finds the migrations that have **not run yet** on the database you point it at (the same list `php artisan migrate:status` shows as *Pending*).
 2. It runs each one in Laravel's **pretend mode**. Nothing is written to the database; Laravel only records the SQL it *would* run.
 3. Each SQL statement is checked against a set of [rules](#rules-and-how-to-fix-each-one).
-4. Every problem is reported with the migration name, the SQL, an explanation and a suggested fix.
+4. It does the same for `down()`, to see what a **rollback** would break ([`unsafe-rollback`](#unsafe-rollback)).
+5. It also **reads the PHP source** of `up()`, to find what a dry run can't show: branches on `Schema::hasColumn()` that were skipped, and code that reads rows ([`schema-condition`](#schema-condition), [`reads-data`](#reads-data)).
+6. Every problem is reported with the migration name, the SQL, an explanation and a suggested fix.
 
-Because it reads the SQL and not your PHP code, it also catches `DB::statement(...)`, `DB::table(...)->update(...)` and anything else your migration executes.
+Because it checks the SQL your migration actually runs, it also catches `DB::statement(...)`, `DB::table(...)->update(...)` and anything else your migration executes.
 
 Tables that are **created in the same batch** of pending migrations are never flagged. They hold no production data yet, so adding indexes or dropping columns on them is harmless.
 
@@ -157,6 +159,10 @@ If you published the config file, you can optionally add the rules added since 1
 'analysis-failed' => null,            // new in 1.0.2, warning
 'concurrent-in-transaction' => null,  // new in 1.1.0, error (PostgreSQL)
 'lock-timeout' => null,               // new in 1.2.0, off until you set 'warning' or 'error'
+'unsafe-rollback' => null,            // new in 1.3.0, warning
+'missing-down' => null,               // new in 1.3.0, off until you set 'warning' or 'error'
+'schema-condition' => null,           // new in 1.3.0, warning
+'reads-data' => null,                 // new in 1.3.0, warning
 ```
 
 Without them each rule keeps its default severity.
@@ -357,6 +363,10 @@ To skip a migration completely (for example, an old one you don't want to touch)
 | [`table-rebuild`](#table-rebuild) | warning | SQLite |
 | [`data-mutation`](#data-mutation) | warning | all |
 | [`lock-timeout`](#lock-timeout) | off (opt-in) | MySQL, MariaDB, PostgreSQL |
+| [`unsafe-rollback`](#unsafe-rollback) | warning | all |
+| [`missing-down`](#missing-down) | off (opt-in) | all |
+| [`schema-condition`](#schema-condition) | warning | all (reads PHP) |
+| [`reads-data`](#reads-data) | warning | all (reads PHP) |
 | [`analysis-failed`](#analysis-failed) | warning | all |
 
 Most fixes follow the same idea, sometimes called **expand / contract**: never remove or change something the running code depends on in the same deploy. Add the new thing, deploy code that uses it, and remove the old thing in a later release.
@@ -578,6 +588,67 @@ On MariaDB you can also put the timeout on the statement itself: `ALTER TABLE us
 
 If you already set the timeout for every connection (in the database config or on the server), leave this rule off.
 
+### `unsafe-rollback`
+
+**Flags:** a `down()` that would do something the rules flag, on a table or column that existed **before** `up()`. Undoing what `up()` itself added (dropping a column or table it created) is expected and not reported.
+
+```php
+public function up(): void
+{
+    Schema::table('users', fn (Blueprint $table) => $table->string('nickname')->nullable());
+}
+
+public function down(): void
+{
+    // nickname is fine (up() added it), legacy is flagged: its data is lost on rollback
+    Schema::table('users', fn (Blueprint $table) => $table->dropColumn(['nickname', 'legacy']));
+}
+```
+
+**Why:** a rollback usually happens in a hurry, when something is already wrong. A `down()` that drops old data, renames columns back while new code is running, or adds a `NOT NULL` column without a default makes the incident worse.
+
+**Safe way:** make `down()` undo exactly what `up()` did, nothing more. The finding shows the rule that matched (for example `On rollback (drop-column): ...`) and that rule's fix. To allow it, use `#[AllowUnsafe('unsafe-rollback')]`.
+
+### `missing-down`
+
+**Off by default.** Turn it on with `'missing-down' => 'warning'`.
+
+**Flags:** a migration whose `up()` changes the database but which has no `down()`, or a `down()` that does nothing, so `migrate:rollback` silently skips it.
+
+**Safe way:** write a `down()` that undoes `up()`. If the migration really can't be undone, throw an exception in `down()` so a rollback stops with a clear message; a `down()` that throws is not reported.
+
+### `schema-condition`
+
+**Flags:** `up()` code that branches on `Schema::hasTable()`, `hasColumn()`, `hasColumns()`, `hasIndex()` or `hasView()`, when the branch the check skipped contains code.
+
+```php
+if (Schema::hasColumn('users', 'legacy')) {     // flagged: this branch is never checked
+    Schema::table('users', fn (Blueprint $table) => $table->dropColumn('legacy'));
+}
+
+if (! Schema::hasColumn('users', 'nickname')) { // fine: this is the branch that gets checked
+    Schema::table('users', fn (Blueprint $table) => $table->string('nickname')->nullable());
+}
+```
+
+**Why:** in pretend mode these checks always answer *false*, so the dry run only follows one branch. Whatever is on the other branch (here a dropped column) runs in production without being checked. An early `return;` on the skipped branch is not reported.
+
+**Safe way:** review the skipped branch by hand, or make the migration do the same thing on every database so it doesn't need to branch.
+
+### `reads-data`
+
+**Flags:** `up()` code that reads rows: `DB::table(...)->get()`, `first()`, `pluck()`, `count()`, `chunk()`, `each()`, `cursor()` and similar, `DB::select()`, and Eloquent model queries such as `User::all()` or `User::where(...)->get()`.
+
+```php
+foreach (DB::table('users')->whereNull('timezone')->get() as $user) {   // flagged
+    DB::table('users')->where('id', $user->id)->update(['timezone' => 'UTC']);
+}
+```
+
+**Why:** the dry run gets no rows back, so whatever the migration does per row was never checked. In production the loop runs for every row, inside the migration, while the deploy waits.
+
+**Safe way:** move data changes to a command or queued job that works in batches, and keep the migration for schema changes.
+
 ### `analysis-failed`
 
 **Flags:** a migration that throws an error during the dry run, usually because it reads data first (pretend mode returns no rows), for example `DB::table('settings')->first()->value`.
@@ -608,6 +679,10 @@ return [
         'data-mutation' => null,
         'analysis-failed' => null,
         'lock-timeout' => null,   // off unless set to 'warning' or 'error'
+        'unsafe-rollback' => null,
+        'missing-down' => null,   // off unless set to 'warning' or 'error'
+        'schema-condition' => null,
+        'reads-data' => null,
     ],
 
     // Migration names (file name without .php) that are never checked
@@ -729,7 +804,7 @@ Use it to post a comment on a pull request or feed another tool.
 **Will running the check change my database?**
 No. Every database connection is in pretend mode during the check, so nothing is created, changed or deleted, not even the `migrations` table. Migrations that try to bypass this by using PDO directly are blocked and reported. This is covered by tests on real MySQL and PostgreSQL servers.
 
-HTTP requests (`Http::`), mail, notifications, queued jobs and `dispatch()` are faked during the check, so they don't happen, and the real services are put back afterwards. Other PHP code in `up()`, such as file or cache writes, is not intercepted and runs for real. See [Limitations](#limitations).
+HTTP requests (`Http::`), mail, notifications, queued jobs, `dispatch()`, events, cache, storage, processes (`Process::`) and `Artisan::call()` are faked during the check, so they don't happen, and the real services are put back afterwards. Plain PHP in `up()` that doesn't go through Laravel, such as `file_put_contents()`, runs for real. See [Limitations](#limitations).
 
 **Does it work with raw queries?**
 Yes. It reads the SQL your migration would run, so `DB::statement()`, `DB::unprepared()` (every statement in the string) and query builder calls with `DB::raw()` are all checked, including SQL with comments in it. Direct PDO calls (`DB::getPdo()->exec(...)`) are blocked and reported for review. See [Raw SQL](#raw-sql).
@@ -754,8 +829,16 @@ No, only `up()`, since that is what runs during a deploy.
 
 ## Limitations
 
-- **Not every side effect is intercepted.** The check really runs your migration's `up()` method. Database statements are recorded instead of executed, and Laravel's HTTP client (`Http::`), mail, notifications, queue and job dispatching (`dispatch()`, `Bus::`) are faked, so those don't happen. Everything else does: files (`Storage::delete(...)`), cache writes, events and their listeners, `Artisan::call()`, and PHP code that doesn't go through those Laravel services (for example `curl` or `file_put_contents()`). Keep migrations to database changes, and put the rest in a command or job.
-- **Pretend mode returns no data.** During the dry run, `select` queries return nothing. A migration that does `if (Schema::hasColumn(...))` or reads rows to decide what to do is checked along the path it takes when those checks come back empty. If the dry run throws an exception, the migration is reported as an `analysis-failed` warning so you can review it by hand.
+- **Not every side effect is intercepted.** The check really runs your migration's `up()` and `down()` methods. Database statements are recorded instead of executed, and these Laravel services are swapped for fakes while it runs:
+  - HTTP client (`Http::`), mail, notifications, queue and job dispatching (`dispatch()`, `Bus::`): recorded, nothing is sent
+  - events (`event()`, `Event::`, model events): recorded, listeners don't run
+  - cache (`Cache::`, `cache()`): an in-memory store, so nothing is written to your real cache
+  - storage (`Storage::`): a temporary folder that is deleted afterwards. Reads come back empty, so a migration that reads a file from storage may be reported as `analysis-failed`
+  - processes (`Process::`) and `Artisan::call()`: recorded, nothing runs
+
+  Code that doesn't go through those services still runs, for example `file_put_contents()`, `exec()`, `curl`, a Guzzle client you create yourself, or `Redis::`. Keep migrations to database changes, and put the rest in a command or job.
+- **Pretend mode returns no data.** During the dry run, `select` queries return nothing. A migration that does `if (Schema::hasColumn(...))` or reads rows to decide what to do is checked along the path it takes when those checks come back empty. The source check reports these cases ([`schema-condition`](#schema-condition), [`reads-data`](#reads-data)) so you know what to review by hand. If the dry run throws an exception, the migration is reported as an `analysis-failed` warning.
+- **The source check only reads `up()` and follows simple patterns.** It sees `DB::table('x')->get()` and `User::where(...)->get()` written directly in `up()`, not a query stored in a variable first or code in another class the migration calls.
 - **It can't know your table sizes.** Warnings describe what *can* lock; on a table with 200 rows it doesn't matter. Use your judgement, and `#[AllowUnsafe]` once you've checked.
 - **Direct PDO calls are blocked, not analysed.** The check can't see what `DB::getPdo()->exec(...)` would do, so it stops the call and reports the migration as `analysis-failed`. Anything after that call in the same migration is not checked. Prefer `DB::statement()`, which is checked.
 - **Only `up()` is checked**, not `down()`.
@@ -794,6 +877,8 @@ docker compose down
 - `tests/Feature/GrammarIntegrationTest.php` runs real Laravel schema code through each database's grammar, so the rules are tested against the exact SQL Laravel generates on SQLite, MySQL and PostgreSQL.
 - `tests/Feature/CommandsTest.php` covers the commands, `#[AllowUnsafe]` and the guard.
 - `tests/Feature/SideEffectsTest.php` checks that HTTP calls, mail, notifications and jobs in `up()` don't happen during the check, and that the real services are restored.
+- `tests/Feature/RollbackAndIsolationTest.php` covers rollback analysis (`unsafe-rollback`, `missing-down`) and checks that storage, cache, events, processes and `Artisan::call()` are faked and restored.
+- `tests/Unit/SourceAnalyzerTest.php` checks the source rules (`schema-condition`, `reads-data`) against migration code.
 - `tests/Feature/TransactionDetectionTest.php` checks that statements know whether they run inside the migration's transaction, decided the same way as `migrate`.
 - `tests/Feature/RealDatabaseCommandsTest.php` runs the commands end to end on real MySQL and PostgreSQL.
 - `composer analyse` runs Larastan (PHPStan for Laravel) at level 8.

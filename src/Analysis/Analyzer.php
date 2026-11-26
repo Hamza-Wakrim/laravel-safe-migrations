@@ -66,6 +66,16 @@ final class Analyzer
         };
     }
 
+    /**
+     * The severity of an opt-in check that is not a SQL rule: only set when the config gives it one.
+     */
+    public function optInSeverity(string $rule): ?Severity
+    {
+        $override = $this->severities[$rule] ?? null;
+
+        return is_string($override) ? Severity::from($override) : null;
+    }
+
     /** @return list<string> */
     public function ruleIds(): array
     {
