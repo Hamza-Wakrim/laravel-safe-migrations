@@ -163,7 +163,8 @@ final class CommandsTest extends TestCase
     {
         $args = ['--path' => $this->fixture('failing'), '--realpath' => true, '--strict' => true];
 
-        config(['safe-migrations.rules.analysis-failed' => false]);
+        // reads-data also reports this migration (it reads a row); only analysis-failed is under test here.
+        config(['safe-migrations.rules.analysis-failed' => false, 'safe-migrations.rules.reads-data' => false]);
         $this->app->forgetInstance(\HamzaWakrim\SafeMigrations\Analysis\Analyzer::class);
         $this->artisan('safe-migrations:check', $args)->assertSuccessful();
 

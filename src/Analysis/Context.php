@@ -12,6 +12,9 @@ final class Context
     /** @var array<string, true> */
     private array $created = [];
 
+    /** @var array<string, true> "table.column" for columns added earlier in the same run. */
+    private array $addedColumns = [];
+
     /** @var array<string, true> Migrations that set a lock timeout for their session. */
     private array $lockTimeouts = [];
 
@@ -26,6 +29,11 @@ final class Context
     public function isRebuilding(string $table): bool
     {
         return isset($this->rebuilding[$table]);
+    }
+
+    public function isNewColumn(string $table, string $column): bool
+    {
+        return $this->isNew($table) || isset($this->addedColumns["{$table}.{$column}"]);
     }
 
     /** Whether this statement's migration set a lock timeout before it. */
@@ -77,6 +85,14 @@ final class Context
             if ($this->isNew($from)) {
                 unset($this->created[$from]);
                 $this->created[$m[3]] = true;
+            }
+        }
+
+        if (($alter = $statement->alterTable()) !== null) {
+            foreach ($alter[1] as $clause) {
+                if (preg_match('/^add (?:column )?(?:if not exists )?(?!(?:index|unique|primary|constraint|foreign|key|fulltext|spatial|check|partition)\b)(\w+) /', $clause, $m)) {
+                    $this->addedColumns["{$alter[0]}.{$m[1]}"] = true;
+                }
             }
         }
     }

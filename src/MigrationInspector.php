@@ -10,6 +10,7 @@ use HamzaWakrim\SafeMigrations\Analysis\Context;
 use HamzaWakrim\SafeMigrations\Analysis\Finding;
 use HamzaWakrim\SafeMigrations\Analysis\Report;
 use HamzaWakrim\SafeMigrations\Analysis\Severity;
+use HamzaWakrim\SafeMigrations\Analysis\SourceAnalyzer;
 use HamzaWakrim\SafeMigrations\Analysis\Statement;
 use HamzaWakrim\SafeMigrations\Attributes\AllowUnsafe;
 use HamzaWakrim\SafeMigrations\Exceptions\DirectPdoAccessException;
@@ -23,6 +24,8 @@ use Throwable;
  */
 final class MigrationInspector
 {
+    private readonly SourceAnalyzer $source;
+
     /**
      * @param  list<string>  $ignoredMigrations
      * @param  list<string>  $connectionNames  Every configured connection; all of them pretend during the dry run.
@@ -33,7 +36,73 @@ final class MigrationInspector
         private readonly Analyzer $analyzer,
         private readonly array $ignoredMigrations = [],
         private readonly array $connectionNames = [],
-    ) {}
+        ?SourceAnalyzer $source = null,
+    ) {
+        $this->source = $source ?? new SourceAnalyzer($analyzer);
+    }
+
+    /**
+     * Dry-run down() too, on the schema up() leaves behind, and report what a
+     * rollback would break. Undoing what up() itself added (a new table or
+     * column) is expected and not reported.
+     *
+     * @param  list<Statement>  $up
+     * @return list<Finding>
+     */
+    private function rollbackFindings(object $migration, ?string $database, string $name, array $up, Context $context): array
+    {
+        $unsafe = $this->analyzer->severityFor('unsafe-rollback', Severity::Warning);
+        $missing = $this->analyzer->optInSeverity('missing-down');
+
+        if ($unsafe === null && $missing === null) {
+            return [];
+        }
+
+        try {
+            $down = method_exists($migration, 'down') ? $this->dryRun($migration, $database, $name, 'down') : [];
+        } catch (Throwable) {
+            return []; // A down() that throws (e.g. "this migration is irreversible") says so on purpose.
+        }
+
+        $findings = [];
+
+        if ($down === [] && $up !== [] && $missing !== null) {
+            $findings[] = new Finding(
+                'missing-down',
+                $missing,
+                'This migration has no down() (or down() does nothing), so it cannot be rolled back.',
+                'Write a down() that undoes up(), or throw an exception in down() to make the migration explicitly irreversible.',
+                migration: $name,
+            );
+        }
+
+        if ($unsafe === null) {
+            return $findings;
+        }
+
+        // The state up() leaves behind, without changing the state the next migration is checked against.
+        foreach ($this->analyzer->analyze($down, clone $context) as $finding) {
+            if ($finding->subject !== null && str_contains($finding->subject, '.')) {
+                [$table, $column] = explode('.', $finding->subject, 2);
+
+                if ($context->isNewColumn($table, $column)) {
+                    continue;
+                }
+            }
+
+            $findings[] = new Finding(
+                'unsafe-rollback',
+                $unsafe,
+                "On rollback ({$finding->rule}): {$finding->message}",
+                $finding->suggestion,
+                $finding->rule.':'.$finding->subject,
+                $finding->sql,
+                $name,
+            );
+        }
+
+        return $findings;
+    }
 
     /** @param  array<string>  $paths */
     public function inspect(array $paths, ?string $database = null, bool $pendingOnly = true): Report
@@ -62,7 +131,10 @@ final class MigrationInspector
                 try {
                     $migration = $this->resolve($path);
                     $statements = $this->dryRun($migration, $database, $name);
-                    $results = $this->analyzer->analyze($statements, $context);
+                    $results = [
+                        ...$this->analyzer->analyze($statements, $context),
+                        ...$this->rollbackFindings($migration, $database, $name, $statements, $context),
+                    ];
                 } catch (Throwable $e) {
                     $results = [];
                     $severity = $this->analyzer->severityFor('analysis-failed', Severity::Warning);
@@ -79,6 +151,9 @@ final class MigrationInspector
                         );
                     }
                 }
+
+                // Read the source too: it shows what the dry run cannot (skipped branches, data reads).
+                $results = [...$results, ...$this->source->analyze($path, $name)];
 
                 $allowances = $migration !== null ? AllowUnsafe::on($migration) : [];
 
@@ -101,14 +176,14 @@ final class MigrationInspector
     }
 
     /**
-     * Run the migration's up() with pretend mode on for its own connection AND
+     * Run the migration's up() (or down()) with pretend mode on for its own connection AND
      * every other configured connection, so a migration that also uses
      * Schema::connection('other') or DB::connection('other') never executes
      * anything for real during the check.
      *
      * @return list<Statement>
      */
-    private function dryRun(object $migration, ?string $database, string $name): array
+    private function dryRun(object $migration, ?string $database, string $name, string $method = 'up'): array
     {
         $own = method_exists($migration, 'getConnection') ? $migration->getConnection() : null;
         $primary = $this->connections->connection(is_string($own) ? $own : $database);
@@ -137,14 +212,14 @@ final class MigrationInspector
 
         // Like Migrator::runMethod(), make the migration's connection the default
         // while up() runs, so DB::statement() and friends go where `migrate` sends them.
-        $run = function () use ($migration, $primary) {
+        $run = function () use ($migration, $primary, $method) {
             $previous = $this->connections->getDefaultConnection();
 
             try {
                 $this->connections->setDefaultConnection($primary->getNameWithReadWriteType() ?? $previous);
 
-                if (method_exists($migration, 'up')) {
-                    $migration->up();
+                if (method_exists($migration, $method)) {
+                    $migration->{$method}();
                 }
             } finally {
                 $this->connections->setDefaultConnection($previous);

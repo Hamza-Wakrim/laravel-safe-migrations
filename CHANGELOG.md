@@ -2,6 +2,18 @@
 
 All notable changes to this project are documented here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Added
+
+- **Rollback analysis.** `down()` is now dry-run too, on the schema `up()` leaves behind, and checked with the same rules.
+  - `unsafe-rollback` (warning): `down()` does something the rules flag on a table or column that existed before `up()`, for example dropping a column `up()` didn't add. Undoing what `up()` added is not reported. The message names the rule that matched: `On rollback (drop-column): ...`.
+  - `missing-down` (opt-in): `up()` changes the database but there is no `down()`, or it does nothing. A `down()` that throws is treated as deliberately irreversible and not reported.
+- **Source analysis.** The PHP source of `up()` is read (with `nikic/php-parser`, now a dependency) to report what a dry run can't see:
+  - `schema-condition` (warning): a branch on `Schema::hasTable()` / `hasColumn()` / `hasColumns()` / `hasIndex()` / `hasView()` whose skipped branch contains code. These checks always answer false during the dry run.
+  - `reads-data` (warning): `up()` reads rows (`DB::table(...)->get()`, `first()`, `chunk()`, `DB::select()`, `User::all()`, ...). The dry run gets no rows, so per-row work was never checked.
+- **More side effects are faked during the check:** events (listeners don't run), cache (in-memory store), storage (a temporary folder, deleted afterwards), processes (`Process::`) and `Artisan::call()`. The real services, and the Eloquent model event dispatcher, are put back afterwards.
+
 ## [1.2.0] - 2026-11-26
 
 ### Added
