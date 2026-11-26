@@ -17,6 +17,11 @@ final class Analyzer
     public function __construct(iterable $rules, private readonly array $severities = [])
     {
         foreach ($rules as $rule) {
+            // Opt-in rules only run when the config gives them a severity.
+            if ($rule instanceof Rules\OptInRule && ! is_string($severities[$rule->id()] ?? null)) {
+                continue;
+            }
+
             $this->rules[$rule->id()] = $rule;
         }
     }
@@ -43,6 +48,7 @@ final class Analyzer
             new Rules\BlockingForeignKeyRule,
             new Rules\TableRebuildRule,
             new Rules\DataMutationRule,
+            new Rules\LockTimeoutRule,
         ];
     }
 

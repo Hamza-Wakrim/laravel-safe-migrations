@@ -10,6 +10,13 @@ final class Statement
     /** Lower-cased SQL with comments and identifier quotes stripped and whitespace collapsed. */
     public readonly string $normalized;
 
+    /**
+     * Options of a MariaDB "SET STATEMENT <options> FOR <statement>" prefix,
+     * e.g. "lock_wait_timeout=5". The prefix itself is removed from $normalized
+     * so rules see the statement it wraps.
+     */
+    public readonly ?string $statementOptions;
+
     public function __construct(
         public readonly string $sql,
         public readonly string $driver,
@@ -17,7 +24,15 @@ final class Statement
         /** Whether Laravel runs this statement inside the migration's transaction. */
         public readonly bool $inTransaction = false,
     ) {
-        $this->normalized = self::normalize($sql);
+        $normalized = self::normalize($sql);
+        $options = null;
+
+        if (preg_match('/^set statement (.+?) for (.+)$/', $normalized, $m)) {
+            [$options, $normalized] = [$m[1], $m[2]];
+        }
+
+        $this->statementOptions = $options;
+        $this->normalized = $normalized;
     }
 
     public static function normalize(string $sql): string
@@ -36,7 +51,7 @@ final class Statement
      */
     public function alterTable(): ?array
     {
-        if (! preg_match('/^alter table (?:only )?(?:if exists )?([\w.]+) (.+)$/', $this->normalized, $m)) {
+        if (! preg_match('/^alter table (?:only )?(?:if exists )?([\w.]+) (?:(?:wait \d+(?:\.\d+)?|nowait) )?(.+)$/', $this->normalized, $m)) {
             return null;
         }
 
