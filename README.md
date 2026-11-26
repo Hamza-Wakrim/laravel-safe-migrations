@@ -156,6 +156,7 @@ If you published the config file, you can optionally add the rules added since 1
 ```php
 'analysis-failed' => null,            // new in 1.0.2, warning
 'concurrent-in-transaction' => null,  // new in 1.1.0, error (PostgreSQL)
+'lock-timeout' => null,               // new in 1.2.0, off until you set 'warning' or 'error'
 ```
 
 Without them each rule keeps its default severity.
@@ -355,6 +356,7 @@ To skip a migration completely (for example, an old one you don't want to touch)
 | [`blocking-foreign-key`](#blocking-foreign-key) | warning | PostgreSQL |
 | [`table-rebuild`](#table-rebuild) | warning | SQLite |
 | [`data-mutation`](#data-mutation) | warning | all |
+| [`lock-timeout`](#lock-timeout) | off (opt-in) | MySQL, MariaDB, PostgreSQL |
 | [`analysis-failed`](#analysis-failed) | warning | all |
 
 Most fixes follow the same idea, sometimes called **expand / contract**: never remove or change something the running code depends on in the same deploy. Add the new thing, deploy code that uses it, and remove the old thing in a later release.
@@ -550,6 +552,32 @@ User::query()->whereNull('newsletter')->chunkById(1000, function ($users) {
 });
 ```
 
+### `lock-timeout`
+
+**Off by default.** Laravel never sets a lock timeout, so this rule would flag almost every `ALTER`. Turn it on with `'lock-timeout' => 'warning'` (or `'error'`).
+
+**Flags:** `ALTER TABLE`, `CREATE INDEX` (without `CONCURRENTLY`) and `RENAME TABLE` on an existing table, in a migration that did not set a lock timeout first.
+
+**Why:** every `ALTER` needs a lock on the table, even an `INSTANT` one on MySQL or MariaDB. If a slow query or an open transaction is using the table, the `ALTER` waits for it, and every query that arrives after the `ALTER` waits behind it. The table is effectively down until the slow query ends. With a timeout, the `ALTER` gives up after a few seconds instead, and you retry the deploy.
+
+**Safe way:** set a timeout at the start of `up()`.
+
+```php
+// PostgreSQL
+DB::statement("SET lock_timeout = '5s'");
+
+// MySQL / MariaDB
+DB::statement('SET SESSION lock_wait_timeout = 5');
+
+Schema::table('users', function (Blueprint $table) {
+    $table->string('nickname')->nullable();
+});
+```
+
+On MariaDB you can also put the timeout on the statement itself: `ALTER TABLE users WAIT 5 ...`, `ALTER TABLE users NOWAIT ...`, or `SET STATEMENT lock_wait_timeout=5 FOR ALTER TABLE ...`. A timeout of `0` on PostgreSQL means "wait forever", so it doesn't count. The timeout only counts in the migration that sets it.
+
+If you already set the timeout for every connection (in the database config or on the server), leave this rule off.
+
 ### `analysis-failed`
 
 **Flags:** a migration that throws an error during the dry run, usually because it reads data first (pretend mode returns no rows), for example `DB::table('settings')->first()->value`.
@@ -579,6 +607,7 @@ return [
         'table-rebuild' => null,
         'data-mutation' => null,
         'analysis-failed' => null,
+        'lock-timeout' => null,   // off unless set to 'warning' or 'error'
     ],
 
     // Migration names (file name without .php) that are never checked

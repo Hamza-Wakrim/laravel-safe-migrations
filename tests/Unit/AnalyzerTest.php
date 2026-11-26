@@ -99,6 +99,66 @@ final class AnalyzerTest extends TestCase
         $this->assertSame(Severity::Error, $findings[0]->severity);
     }
 
+    /** @return array<string, array{string, list<string>, list<string>}> */
+    public static function lockTimeoutStatements(): array
+    {
+        return [
+            'pgsql alter without timeout' => ['pgsql', ['alter table "users" add column "bio" text null'], ['users']],
+            'pgsql set lock_timeout first' => ['pgsql', ["SET lock_timeout = '5s'", 'alter table "users" add column "bio" text null'], []],
+            'pgsql set local lock_timeout to' => ['pgsql', ["SET LOCAL lock_timeout TO '3s'", 'alter table "users" add column "bio" text null'], []],
+            'pgsql lock_timeout 0 waits forever' => ['pgsql', ["SET lock_timeout = '5s'", 'SET lock_timeout = 0', 'alter table "users" add column "bio" text null'], ['users']],
+            'pgsql timeout set after the alter' => ['pgsql', ['alter table "users" add column "bio" text null', "SET lock_timeout = '5s'"], ['users']],
+            'pgsql create index' => ['pgsql', ['create index "users_email_index" on "users" ("email")'], ['users']],
+            'pgsql create index concurrently' => ['pgsql', ['create index concurrently "users_email_index" on "users" ("email")'], []],
+            'mysql alter without timeout' => ['mysql', ['alter table `users` add `bio` text null'], ['users']],
+            'mysql session lock_wait_timeout' => ['mysql', ['SET SESSION lock_wait_timeout = 5', 'alter table `users` add `bio` text null'], []],
+            'mysql @@session lock_wait_timeout' => ['mysql', ['SET @@session.lock_wait_timeout=5', 'alter table `users` add `bio` text null'], []],
+            'mysql global lock_wait_timeout does not count' => ['mysql', ['SET GLOBAL lock_wait_timeout = 5', 'alter table `users` add `bio` text null'], ['users']],
+            'mysql rename table' => ['mysql', ['rename table `users` to `members`'], ['users']],
+            'mariadb alter without timeout' => ['mariadb', ['alter table `users` add `bio` text null'], ['users']],
+            'mariadb alter wait' => ['mariadb', ['ALTER TABLE users WAIT 5 ADD bio text null'], []],
+            'mariadb alter nowait' => ['mariadb', ['ALTER TABLE users NOWAIT ADD bio text null'], []],
+            'mariadb set statement' => ['mariadb', ['SET STATEMENT lock_wait_timeout=5 FOR ALTER TABLE users ADD bio text null'], []],
+            'mariadb create index wait' => ['mariadb', ['CREATE INDEX users_bio ON users (bio) WAIT 2'], []],
+            'mariadb on mysql driver with wait' => ['mysql', ['ALTER TABLE users WAIT 5 ADD bio text null'], []],
+            'timeout in another migration does not count' => ['pgsql', ["SET lock_timeout = '5s'", 'alter table "users" add column "bio" text null'], ['users'], ['a', 'b']],
+            'new table is fine' => ['pgsql', ['create table "teams" ("id" serial primary key not null)', 'alter table "teams" add column "bio" text null'], []],
+            'sqlite is skipped' => ['sqlite', ['alter table "users" add column "bio" text'], []],
+            'update is not a lock statement' => ['mysql', ['update `users` set `bio` = ? where `id` = ?'], []],
+        ];
+    }
+
+    /**
+     * @param  list<string>  $sql
+     * @param  list<string>  $expectedTables
+     * @param  list<string>|null  $migrations
+     */
+    #[DataProvider('lockTimeoutStatements')]
+    public function test_lock_timeout_rule(string $driver, array $sql, array $expectedTables, ?array $migrations = null): void
+    {
+        $statements = array_map(fn (string $q, int $i) => new Statement($q, $driver, $migrations[$i] ?? 'm'), $sql, array_keys($sql));
+
+        $findings = array_filter(
+            Analyzer::withDefaultRules(['lock-timeout' => 'warning'])->analyze($statements),
+            fn (Finding $f) => $f->rule === 'lock-timeout',
+        );
+
+        $this->assertSame($expectedTables, array_values(array_map(fn (Finding $f) => $f->subject, $findings)));
+    }
+
+    public function test_lock_timeout_rule_is_off_by_default(): void
+    {
+        $this->assertSame(['drop-column'], $this->rules([new Statement('alter table "users" drop column "bio"', 'pgsql', 'm')]));
+        $this->assertNotContains('lock-timeout', Analyzer::withDefaultRules()->ruleIds());
+        $this->assertContains('lock-timeout', Analyzer::withDefaultRules(['lock-timeout' => 'error'])->ruleIds());
+    }
+
+    public function test_mariadb_wait_and_set_statement_do_not_hide_other_rules(): void
+    {
+        $this->assertSame(['drop-column'], $this->rules([new Statement('ALTER TABLE users WAIT 5 DROP COLUMN bio', 'mariadb', 'm')]));
+        $this->assertSame(['drop-column'], $this->rules([new Statement('SET STATEMENT lock_wait_timeout=5 FOR ALTER TABLE users DROP COLUMN bio', 'mariadb', 'm')]));
+    }
+
     public function test_tables_created_in_the_same_run_are_not_flagged(): void
     {
         $rules = $this->rules([

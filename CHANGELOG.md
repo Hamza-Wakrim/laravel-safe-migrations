@@ -2,6 +2,17 @@
 
 All notable changes to this project are documented here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Added
+
+- **`lock-timeout` rule (MySQL, MariaDB, PostgreSQL, opt-in).** Flags `ALTER TABLE`, `CREATE INDEX` (without `CONCURRENTLY`) and `RENAME TABLE` on an existing table when the migration did not set a lock timeout first. Even an instant `ALTER` waits for a lock, and every query after it queues behind it, so a single slow query can block the table. Passes after `SET lock_timeout` (PostgreSQL), `SET SESSION lock_wait_timeout` (MySQL, MariaDB), or MariaDB's `WAIT n` / `NOWAIT` / `SET STATEMENT lock_wait_timeout=n FOR ...`. Off by default because Laravel never sets a timeout; turn it on with `'lock-timeout' => 'warning'`.
+- Rules can be opt-in (`OptInRule`): they only run when the config gives them a severity.
+
+### Fixed
+
+- **MariaDB `WAIT n` / `NOWAIT` and `SET STATEMENT ... FOR` hid statements from the rules.** `ALTER TABLE users WAIT 5 DROP COLUMN bio` and `SET STATEMENT lock_wait_timeout=5 FOR ALTER TABLE users DROP COLUMN bio` were not flagged by `drop-column` or any other rule. Both are now read as the statement they wrap.
+
 ## [1.1.1] - 2026-11-25
 
 ### Fixed

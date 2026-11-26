@@ -30,6 +30,7 @@ return [
         'table-rebuild' => null,        // warning  (SQLite table copy for ->change() etc.)
         'data-mutation' => null,        // warning  (UPDATE / DELETE without WHERE, TRUNCATE)
         'analysis-failed' => null,      // warning  (the migration threw an error during the dry run)
+        'lock-timeout' => null,         // off unless set to 'warning' or 'error' (ALTER without a lock timeout)
     ],
 
     /*

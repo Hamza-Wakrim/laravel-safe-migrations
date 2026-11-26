@@ -12,6 +12,9 @@ final class Context
     /** @var array<string, true> */
     private array $created = [];
 
+    /** @var array<string, true> Migrations that set a lock timeout for their session. */
+    private array $lockTimeouts = [];
+
     /** @var array<string, true> Tables SQLite is currently rebuilding via __temp__ copies. */
     private array $rebuilding = [];
 
@@ -25,9 +28,26 @@ final class Context
         return isset($this->rebuilding[$table]);
     }
 
+    /** Whether this statement's migration set a lock timeout before it. */
+    public function hasLockTimeout(Statement $statement): bool
+    {
+        return isset($this->lockTimeouts[(string) $statement->migration]);
+    }
+
     public function record(Statement $statement): void
     {
         $sql = $statement->normalized;
+
+        // SET lock_timeout (PostgreSQL) / SET SESSION lock_wait_timeout (MySQL, MariaDB). 0 means wait forever.
+        if (preg_match('/^set (?:session |local )?(?:@@(?:session\.|local\.)?)?(?:lock_timeout|lock_wait_timeout) ?(?:=|to) ?\'?([^\s,\']+)/', $sql, $m)) {
+            if (preg_match('/^0+(?:\.0+)?(?:ms|s|min)?$/', $m[1])) {
+                unset($this->lockTimeouts[(string) $statement->migration]);
+            } else {
+                $this->lockTimeouts[(string) $statement->migration] = true;
+            }
+
+            return;
+        }
 
         if (preg_match('/^create table (?:if not exists )?([\w.]+)/', $sql, $m)) {
             if (str_starts_with($m[1], '__temp__')) {
