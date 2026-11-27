@@ -31,7 +31,7 @@ final class AnalyzerTest extends TestCase
             'add not null without default (pgsql)' => ['pgsql', 'alter table "users" add column "nickname" varchar(255) not null', ['add-not-null-column']],
             'add not null with default' => ['pgsql', "alter table \"users\" add column \"role\" varchar(255) not null default 'member'", []],
             'add nullable' => ['mysql', 'alter table `users` add `nickname` varchar(255) null', []],
-            'add auto increment' => ['mysql', 'alter table `users` add `id` bigint unsigned not null auto_increment primary key', []],
+            'add auto increment (blocks writes)' => ['mysql', 'alter table `users` add `id` bigint unsigned not null auto_increment primary key', ['table-copy']],
             'add generated column' => ['mysql', 'alter table `users` add `full` varchar(255) as (concat(first, last)) not null', []],
             'pgsql create index' => ['pgsql', 'create index "users_email_index" on "users" ("email")', ['blocking-index']],
             'pgsql create index concurrently' => ['pgsql', 'create index concurrently "users_email_index" on "users" ("email")', []],
@@ -157,6 +157,74 @@ final class AnalyzerTest extends TestCase
     {
         $this->assertSame(['drop-column'], $this->rules([new Statement('ALTER TABLE users WAIT 5 DROP COLUMN bio', 'mariadb', 'm')]));
         $this->assertSame(['drop-column'], $this->rules([new Statement('SET STATEMENT lock_wait_timeout=5 FOR ALTER TABLE users DROP COLUMN bio', 'mariadb', 'm')]));
+    }
+
+    /** @return array<string, array{string, list<string>, list<string>}> */
+    public static function mysqlAlgorithmStatements(): array
+    {
+        $fk = 'alter table `posts` add constraint `posts_user_id_foreign` foreign key (`user_id`) references `users` (`id`)';
+
+        return [
+            'foreign key copies' => ['mysql', [$fk], ['table-copy:posts:add-foreign']],
+            'foreign key copies (mariadb)' => ['mariadb', [$fk], ['table-copy:posts:add-foreign']],
+            'foreign key with checks off is in place' => ['mysql', ['SET FOREIGN_KEY_CHECKS=0;', $fk, 'SET FOREIGN_KEY_CHECKS=1;'], []],
+            'foreign key after checks back on copies' => ['mysql', ['SET FOREIGN_KEY_CHECKS=0', 'SET FOREIGN_KEY_CHECKS=1', $fk], ['table-copy:posts:add-foreign']],
+            'foreign key on new table' => ['mysql', ['create table `posts` (`id` bigint unsigned not null auto_increment primary key, `user_id` bigint unsigned not null)', $fk], []],
+            'foreign key is not a mysql thing on pgsql' => ['pgsql', ['alter table "posts" add constraint "f" foreign key ("user_id") references "users" ("id") not valid'], []],
+            'convert charset' => ['mysql', ['ALTER TABLE users CONVERT TO CHARACTER SET utf8mb4'], ['table-copy:users:convert-charset']],
+            'drop primary key alone' => ['mysql', ['alter table `users` drop primary key'], ['table-copy:users:drop-primary']],
+            'swap primary key in place' => ['mysql', ['ALTER TABLE users DROP PRIMARY KEY, ADD PRIMARY KEY (id, team_id)'], []],
+            'stored generated column' => ['mysql', ['alter table `users` add `full_name` varchar(255) as (concat(first, \' \', last)) stored'], ['table-copy:users:stored-column']],
+            'virtual generated column is instant' => ['mysql', ['alter table `users` add `full_name` varchar(255) as (concat(first, last)) virtual'], []],
+            'mariadb persistent column' => ['mariadb', ['ALTER TABLE users ADD full_name varchar(255) AS (CONCAT(first, last)) PERSISTENT'], ['table-copy:users:stored-column']],
+            'fulltext index blocks writes' => ['mysql', ['alter table `posts` add fulltext `posts_body_fulltext`(`body`)'], ['table-copy:posts:add-fulltext']],
+            'create fulltext index' => ['mariadb', ['CREATE FULLTEXT INDEX posts_body ON posts (body)'], ['table-copy:posts:add-fulltext']],
+            'spatial index blocks writes' => ['mysql', ['alter table `places` add spatial index `places_point_spatialindex`(`point`)'], ['table-copy:places:add-spatial']],
+            'algorithm copy' => ['mysql', ['ALTER TABLE users ADD INDEX i (email), ALGORITHM=COPY'], ['table-copy:users:algorithm-copy']],
+            'plain index is online' => ['mysql', ['alter table `users` add index `users_email_index`(`email`)'], []],
+            'nullable column is instant' => ['mariadb', ['alter table `users` add `bio` text null'], []],
+            'lock none guards a copy' => ['mysql', ['ALTER TABLE users ADD INDEX i (email), LOCK=NONE'], []],
+            'instant add column is fine' => ['mysql', ['ALTER TABLE users ADD bio text NULL, ALGORITHM=INSTANT'], []],
+            'instant index is rejected' => ['mysql', ['ALTER TABLE users ADD INDEX users_email (email), ALGORITHM=INSTANT'], ['unsupported-algorithm:users:algorithm=instant']],
+            'instant index is rejected (equals optional)' => ['mariadb', ['ALTER TABLE users ADD INDEX users_email (email), ALGORITHM INSTANT'], ['unsupported-algorithm:users:algorithm=instant']],
+            'inplace foreign key is rejected' => ['mysql', [$fk.', algorithm=inplace'], ['unsupported-algorithm:posts:algorithm=inplace']],
+            'inplace foreign key with checks off is fine' => ['mysql', ['SET FOREIGN_KEY_CHECKS=0', $fk.', algorithm=inplace'], []],
+            'lock none on fulltext is rejected' => ['mysql', ['ALTER TABLE posts ADD FULLTEXT INDEX body (body), LOCK=NONE'], ['unsupported-algorithm:posts:lock=none']],
+            'lock none on create spatial index is rejected' => ['mysql', ['CREATE SPATIAL INDEX p ON places (point) LOCK=NONE'], ['unsupported-algorithm:places:lock=none']],
+            'inplace lock none index is fine' => ['mysql', ['ALTER TABLE users ADD INDEX i (email), ALGORITHM=INPLACE, LOCK=NONE'], []],
+            'nocopy primary key is rejected' => ['mariadb', ['ALTER TABLE users ADD PRIMARY KEY (id), ALGORITHM=NOCOPY'], ['unsupported-algorithm:users:algorithm=nocopy']],
+            'nocopy index is fine' => ['mariadb', ['ALTER TABLE users ADD INDEX i (email), ALGORITHM=NOCOPY, LOCK=NONE'], []],
+            'rejected even on a new table' => ['mysql', ['create table `t` (`id` int)', 'ALTER TABLE t ADD INDEX i (id), ALGORITHM=INSTANT'], ['unsupported-algorithm:t:algorithm=instant']],
+        ];
+    }
+
+    /**
+     * @param  list<string>  $sql
+     * @param  list<string>  $expected
+     */
+    #[DataProvider('mysqlAlgorithmStatements')]
+    public function test_mysql_table_copy_and_algorithms(string $driver, array $sql, array $expected): void
+    {
+        $statements = array_map(fn (string $q) => new Statement($q, $driver, 'm'), $sql);
+        $findings = array_filter(
+            Analyzer::withDefaultRules()->analyze($statements),
+            fn (Finding $f) => in_array($f->rule, ['table-copy', 'unsupported-algorithm'], true),
+        );
+
+        $this->assertSame($expected, array_values(array_map(fn (Finding $f) => $f->rule.':'.$f->subject, $findings)));
+    }
+
+    public function test_mysql_messages_name_the_server(): void
+    {
+        $findings = Analyzer::withDefaultRules()->analyze([
+            new Statement('ALTER TABLE users ADD PRIMARY KEY (id), ALGORITHM=NOCOPY', 'mariadb', 'm'),
+            new Statement('ALTER TABLE users CONVERT TO CHARACTER SET utf8mb4', 'mysql', 'm'),
+        ]);
+
+        $this->assertSame(Severity::Error, $findings[0]->severity);
+        $this->assertStringContainsString('MariaDB rejects ALGORITHM=NOCOPY for adding a primary key on [users]', $findings[0]->message);
+        $this->assertSame(Severity::Warning, $findings[1]->severity);
+        $this->assertStringContainsString('ALGORITHM=INPLACE (or INSTANT) and LOCK=NONE: MySQL', (string) $findings[1]->suggestion);
     }
 
     public function test_tables_created_in_the_same_run_are_not_flagged(): void

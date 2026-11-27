@@ -28,6 +28,8 @@ return [
         'concurrent-in-transaction' => null, // error (PostgreSQL, CONCURRENTLY inside a transactional migration)
         'blocking-foreign-key' => null, // warning  (PostgreSQL, foreign key without NOT VALID)
         'table-rebuild' => null,        // warning  (SQLite table copy for ->change() etc.)
+        'table-copy' => null,           // warning  (MySQL / MariaDB ALTER that copies the table or can't use LOCK=NONE)
+        'unsupported-algorithm' => null, // error   (MySQL / MariaDB ALGORITHM= / LOCK= the server rejects)
         'data-mutation' => null,        // warning  (UPDATE / DELETE without WHERE, TRUNCATE)
         'analysis-failed' => null,      // warning  (the migration threw an error during the dry run)
         'lock-timeout' => null,         // off unless set to 'warning' or 'error' (ALTER without a lock timeout)

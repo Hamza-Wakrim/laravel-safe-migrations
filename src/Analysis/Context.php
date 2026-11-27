@@ -18,6 +18,9 @@ final class Context
     /** @var array<string, true> Migrations that set a lock timeout for their session. */
     private array $lockTimeouts = [];
 
+    /** @var array<string, true> Migrations that turned foreign_key_checks off (MySQL / MariaDB). */
+    private array $foreignKeyChecksOff = [];
+
     /** @var array<string, true> Tables SQLite is currently rebuilding via __temp__ copies. */
     private array $rebuilding = [];
 
@@ -38,14 +41,21 @@ final class Context
 
     /**
      * The state down() of this migration runs against: what up() left behind,
-     * but without up()'s lock timeout, because a rollback runs in another session.
+     * but without the session settings up() made (lock timeout, foreign_key_checks),
+     * because a rollback runs in another session.
      */
     public function forRollback(string $migration): self
     {
         $context = clone $this;
-        unset($context->lockTimeouts[$migration]);
+        unset($context->lockTimeouts[$migration], $context->foreignKeyChecksOff[$migration]);
 
         return $context;
+    }
+
+    /** Whether foreign_key_checks is on for this statement (MySQL / MariaDB): on unless the migration turned it off. */
+    public function foreignKeyChecks(Statement $statement): bool
+    {
+        return ! isset($this->foreignKeyChecksOff[(string) $statement->migration]);
     }
 
     /** Whether this statement's migration set a lock timeout before it. */
@@ -57,6 +67,17 @@ final class Context
     public function record(Statement $statement): void
     {
         $sql = $statement->normalized;
+
+        // SET FOREIGN_KEY_CHECKS=0 (Schema::disableForeignKeyConstraints() on MySQL / MariaDB).
+        if (preg_match('/^set (?:session |@@session\.|@@)?foreign_key_checks ?= ?\'?(\w+)/', $sql, $m)) {
+            if (in_array($m[1], ['0', 'off', 'false'], true)) {
+                $this->foreignKeyChecksOff[(string) $statement->migration] = true;
+            } else {
+                unset($this->foreignKeyChecksOff[(string) $statement->migration]);
+            }
+
+            return;
+        }
 
         // SET lock_timeout (PostgreSQL) / SET SESSION lock_wait_timeout (MySQL, MariaDB). 0 means wait forever.
         if (preg_match('/^set (?:session |local )?(?:@@(?:session\.|local\.)?)?(?:lock_timeout|lock_wait_timeout) ?(?:=|to) ?\'?([^\s,\']+)/', $sql, $m)) {

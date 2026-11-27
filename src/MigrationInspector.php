@@ -5,6 +5,7 @@ namespace HamzaWakrim\SafeMigrations;
 use Illuminate\Database\Connection;
 use Illuminate\Database\ConnectionResolverInterface;
 use Illuminate\Database\Migrations\Migrator;
+use Illuminate\Database\MySqlConnection;
 use HamzaWakrim\SafeMigrations\Analysis\Analyzer;
 use HamzaWakrim\SafeMigrations\Analysis\Context;
 use HamzaWakrim\SafeMigrations\Analysis\Finding;
@@ -234,6 +235,9 @@ final class MigrationInspector
             };
         }
 
+        // Before the PDO guard goes in: which server each connection really talks to.
+        $drivers = array_map($this->driverOf(...), $connections);
+
         // Pretend mode does not cover code that uses PDO directly, so put a
         // guard in front of every PDO until the dry run is over.
         $originals = [];
@@ -271,12 +275,31 @@ final class MigrationInspector
             foreach ($logs[$id] ?? [] as $query) {
                 // DB::unprepared() can carry several statements in one string; check each one.
                 foreach (Statement::splitStatements($query['query']) as $sql) {
-                    $statements[] = new Statement($sql, $connection->getDriverName(), $name, $inTransaction);
+                    $statements[] = new Statement($sql, $drivers[$id], $name, $inTransaction);
                 }
             }
         }
 
         return $statements;
+    }
+
+    /**
+     * The driver name the rules see. Many MariaDB apps still use the `mysql`
+     * driver; MariaDB's online DDL differs from MySQL's, so report it as `mariadb`.
+     */
+    private function driverOf(Connection $connection): string
+    {
+        $driver = $connection->getDriverName();
+
+        if ($driver === 'mysql' && $connection instanceof MySqlConnection) {
+            try {
+                return $connection->isMaria() ? 'mariadb' : $driver;
+            } catch (Throwable) {
+                return $driver; // Can't reach the server: keep the configured driver.
+            }
+        }
+
+        return $driver;
     }
 
     /**
