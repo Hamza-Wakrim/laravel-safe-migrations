@@ -2,6 +2,16 @@
 
 All notable changes to this project are documented here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Fixed
+
+- **`lock-timeout` on rollback used `up()`'s timeout.** A `SET lock_timeout` / `SET SESSION lock_wait_timeout` in `up()` was counted for `down()` too, but a rollback runs in another session where it isn't set. `down()` now needs its own timeout (reported as `unsafe-rollback` when `lock-timeout` is on).
+
+### Tests
+
+- The integration tests now also run on MariaDB 11.4 (Docker and CI), and cover rollback analysis, `schema-condition`, `lock-timeout` and MariaDB's `WAIT` / `SET STATEMENT` on real MySQL, MariaDB and PostgreSQL servers.
+
 ## [1.3.0] - 2026-11-26
 
 ### Added

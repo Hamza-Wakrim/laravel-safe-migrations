@@ -36,6 +36,18 @@ final class Context
         return $this->isNew($table) || isset($this->addedColumns["{$table}.{$column}"]);
     }
 
+    /**
+     * The state down() of this migration runs against: what up() left behind,
+     * but without up()'s lock timeout, because a rollback runs in another session.
+     */
+    public function forRollback(string $migration): self
+    {
+        $context = clone $this;
+        unset($context->lockTimeouts[$migration]);
+
+        return $context;
+    }
+
     /** Whether this statement's migration set a lock timeout before it. */
     public function hasLockTimeout(Statement $statement): bool
     {

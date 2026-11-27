@@ -864,7 +864,7 @@ Check that `SAFE_MIGRATIONS_GUARD=true`, that `APP_ENV` is listed in `guard.envi
 
 ## Developing this package
 
-Everything runs in Docker, including MySQL 8.4 and PostgreSQL 17 for the integration tests:
+Everything runs in Docker, including MySQL 8.4, MariaDB 11.4 and PostgreSQL 17 for the integration tests:
 
 ```bash
 docker compose build
@@ -880,10 +880,10 @@ docker compose down
 - `tests/Feature/RollbackAndIsolationTest.php` covers rollback analysis (`unsafe-rollback`, `missing-down`) and checks that storage, cache, events, processes and `Artisan::call()` are faked and restored.
 - `tests/Unit/SourceAnalyzerTest.php` checks the source rules (`schema-condition`, `reads-data`) against migration code.
 - `tests/Feature/TransactionDetectionTest.php` checks that statements know whether they run inside the migration's transaction, decided the same way as `migrate`.
-- `tests/Feature/RealDatabaseCommandsTest.php` runs the commands end to end on real MySQL and PostgreSQL.
+- `tests/Feature/RealDatabaseCommandsTest.php` runs the commands end to end on real MySQL, MariaDB and PostgreSQL, including rollback analysis, `lock-timeout` and MariaDB's `WAIT` / `SET STATEMENT`.
 - `composer analyse` runs Larastan (PHPStan for Laravel) at level 8.
 
-Without Docker, `composer install && vendor/bin/phpunit` runs the SQLite tests and skips MySQL and PostgreSQL.
+Without Docker, `composer install && vendor/bin/phpunit` runs the SQLite tests and skips MySQL, MariaDB and PostgreSQL.
 
 To add a rule: implement `HamzaWakrim\SafeMigrations\Rules\Rule`, add it to `Analyzer::defaultRules()`, add its id to `config/safe-migrations.php`, and add cases to both test files.
 

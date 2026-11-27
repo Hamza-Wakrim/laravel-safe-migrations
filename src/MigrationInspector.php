@@ -81,7 +81,7 @@ final class MigrationInspector
         }
 
         // The state up() leaves behind, without changing the state the next migration is checked against.
-        foreach ($this->analyzer->analyze($down, clone $context) as $finding) {
+        foreach ($this->analyzer->analyze($down, $context->forRollback($name)) as $finding) {
             if ($finding->subject !== null && str_contains($finding->subject, '.')) {
                 [$table, $column] = explode('.', $finding->subject, 2);
 

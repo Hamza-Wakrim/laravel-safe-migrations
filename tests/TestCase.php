@@ -43,6 +43,19 @@ abstract class TestCase extends Orchestra
             'strict' => true,
         ]);
 
+        $config->set('database.connections.mariadb', [
+            'driver' => 'mariadb',
+            'host' => env('SAFE_MIGRATIONS_MARIADB_HOST'),
+            'port' => env('SAFE_MIGRATIONS_MARIADB_PORT', 3306),
+            'database' => env('SAFE_MIGRATIONS_DB_NAME', 'safe_migrations'),
+            'username' => env('SAFE_MIGRATIONS_DB_USER', 'root'),
+            'password' => env('SAFE_MIGRATIONS_DB_PASSWORD', 'secret'),
+            'charset' => 'utf8mb4',
+            'collation' => 'utf8mb4_unicode_ci',
+            'prefix' => '',
+            'strict' => true,
+        ]);
+
         $config->set('database.connections.pgsql', [
             'driver' => 'pgsql',
             'host' => env('SAFE_MIGRATIONS_PGSQL_HOST'),
