@@ -12,10 +12,12 @@ Some migrations look harmless but take your app down when they run on a busy pro
 - dropping or renaming a column that the old code (still running during the deploy) is reading,
 - adding a `NOT NULL` column to a table that already has rows,
 - building an index on PostgreSQL, which blocks every write to the table until it finishes,
+- adding a foreign key on MySQL, which copies the whole table and blocks writes while it does,
 - using `CREATE INDEX CONCURRENTLY` in a migration that runs inside a transaction, which PostgreSQL rejects,
-- an `UPDATE` without a `WHERE` that rewrites millions of rows in one transaction.
+- an `UPDATE` without a `WHERE` that rewrites millions of rows in one transaction,
+- a `down()` that would destroy data if you have to roll back in a hurry.
 
-This package finds those problems **before** you run `migrate`. It dry-runs your pending migrations, looks at the SQL they would execute, and tells you what is risky, why, and how to do it safely.
+This package finds those problems **before** you run `migrate`. It dry-runs your pending migrations (both `up()` and `down()`), looks at the SQL they would execute and at the PHP code itself, and tells you what is risky, why, and how to do it safely.
 
 ```
   2024_02_01_000000_drop_legacy_from_users
@@ -106,7 +108,9 @@ SQL comments (`-- ...` and `/* ... */`) are ignored, so a comment before or insi
 
 - PHP 8.2 or newer (8.3 or newer for Laravel 13)
 - Laravel 12 or 13
-- MySQL / MariaDB, PostgreSQL or SQLite (SQL Server is not supported)
+- MySQL, MariaDB, PostgreSQL or SQLite (SQL Server is not supported)
+
+MariaDB works with Laravel's `mariadb` driver and with the `mysql` driver: a MariaDB server is detected either way and checked with MariaDB's rules, since its online DDL differs from MySQL's.
 
 ## Installation
 
@@ -312,7 +316,7 @@ Notes:
 
 | | Meaning | Blocks `check` / `migrate:safe` / guard? |
 | --- | --- | --- |
-| **ERROR** | Almost always breaks something: lost data, failing queries from the running code, or a migration that fails on a non-empty table. | Yes |
+| **ERROR** | Almost always breaks something: lost data, failing queries from the running code, or a migration that fails when it runs in production (on a non-empty table, or because the database rejects the statement). | Yes |
 | **WARN** | Can lock a table or be slow, depending on table size and database version. Worth a look. | Only with `--strict` (or `guard.strict`) |
 
 You can change the severity of any rule, or switch it off, in the [config](#configuration-reference).
@@ -356,8 +360,8 @@ To skip a migration completely (for example, an old one you don't want to touch)
 | [`drop-column`](#drop-column) | error | all |
 | [`rename-table`](#rename-table-and-rename-column) | error | all |
 | [`rename-column`](#rename-table-and-rename-column) | error | all |
-| [`add-not-null-column`](#add-not-null-column) | error (warning on MySQL) | all |
-| [`change-column`](#change-column) | warning | MySQL, PostgreSQL |
+| [`add-not-null-column`](#add-not-null-column) | error (warning on MySQL / MariaDB) | all |
+| [`change-column`](#change-column) | warning | MySQL, MariaDB, PostgreSQL |
 | [`set-not-null`](#set-not-null) | warning | PostgreSQL |
 | [`blocking-index`](#blocking-index) | warning | PostgreSQL |
 | [`concurrent-in-transaction`](#concurrent-in-transaction) | error | PostgreSQL |
@@ -418,7 +422,7 @@ Or keep the database name and change only the PHP side (an Eloquent accessor, or
 $table->string('timezone');  // flagged: NOT NULL, no default
 ```
 
-**Why:** PostgreSQL and SQLite refuse to add it as soon as the table has rows, so the migration fails in production even though it worked on your empty local database. MySQL adds it but silently fills existing rows with `''`, `0` or a zero date, which is why this rule is only a warning on MySQL.
+**Why:** PostgreSQL and SQLite refuse to add it as soon as the table has rows, so the migration fails in production even though it worked on your empty local database. MySQL and MariaDB add it but silently fill existing rows with `''`, `0` or a zero date, which is why this rule is only a warning there.
 
 **Safe way:** either give it a default:
 
@@ -442,7 +446,7 @@ On PostgreSQL, migration 2 is reported as [`change-column`](#change-column) and 
 
 ### `change-column`
 
-**Flags:** `->change()` and other column type changes (`MODIFY` / `CHANGE` on MySQL, `ALTER COLUMN ... TYPE` on PostgreSQL).
+**Flags:** `->change()` and other column type changes (`MODIFY` / `CHANGE` on MySQL and MariaDB, `ALTER COLUMN ... TYPE` on PostgreSQL).
 
 **Why:** many type changes make the database rewrite the whole table while holding a lock, blocking reads and writes. On a big table that can take minutes.
 
@@ -868,7 +872,7 @@ Use it to post a comment on a pull request or feed another tool.
 ## FAQ
 
 **Will running the check change my database?**
-No. Every database connection is in pretend mode during the check, so nothing is created, changed or deleted, not even the `migrations` table. Migrations that try to bypass this by using PDO directly are blocked and reported. This is covered by tests on real MySQL and PostgreSQL servers.
+No. Every database connection is in pretend mode during the check, so nothing is created, changed or deleted, not even the `migrations` table. Migrations that try to bypass this by using PDO directly are blocked and reported. This is covered by tests on real MySQL, MariaDB and PostgreSQL servers.
 
 HTTP requests (`Http::`), mail, notifications, queued jobs, `dispatch()`, events, cache, storage, processes (`Process::`) and `Artisan::call()` are faked during the check, so they don't happen, and the real services are put back afterwards. Plain PHP in `up()` that doesn't go through Laravel, such as `file_put_contents()`, runs for real. See [Limitations](#limitations).
 
@@ -891,7 +895,10 @@ You can, but some rules only apply to one database engine (for example, index lo
 Add `#[AllowUnsafe('rule-name', reason: '...')]` to that migration. The reason stays next to the code for whoever reviews it. See [When a finding is intentional](#when-a-finding-is-intentional).
 
 **Does it check `down()`?**
-No, only `up()`, since that is what runs during a deploy.
+Yes, since 1.3.0. `down()` is dry-run on the schema `up()` leaves behind, and anything it would break on tables or columns that existed before `up()` is reported as [`unsafe-rollback`](#unsafe-rollback). Undoing what `up()` added is not reported. Turn on [`missing-down`](#missing-down) to also report migrations that can't be rolled back at all.
+
+**Does it run my migration's PHP, or read it?**
+Both. The dry run runs `up()` and `down()` with the database in pretend mode, and the [source check](#schema-condition) also reads the PHP of `up()` without running it, to find what a dry run can't show (skipped `Schema::hasColumn()` branches and code that reads rows).
 
 ## Limitations
 
@@ -907,7 +914,8 @@ No, only `up()`, since that is what runs during a deploy.
 - **The source check only reads `up()` and follows simple patterns.** It sees `DB::table('x')->get()` and `User::where(...)->get()` written directly in `up()`, not a query stored in a variable first or code in another class the migration calls.
 - **It can't know your table sizes.** Warnings describe what *can* lock; on a table with 200 rows it doesn't matter. Use your judgement, and `#[AllowUnsafe]` once you've checked.
 - **Direct PDO calls are blocked, not analysed.** The check can't see what `DB::getPdo()->exec(...)` would do, so it stops the call and reports the migration as `analysis-failed`. Anything after that call in the same migration is not checked. Prefer `DB::statement()`, which is checked.
-- **Only `up()` is checked**, not `down()`.
+- **Rollback analysis checks `down()` right after `up()`.** It sees what a rollback of the pending migrations would break, not a rollback of migrations that already ran.
+- **MariaDB's behaviour depends on its version.** Since 11.2, MariaDB can copy a table while writes go on, so `table-copy` describes both cases and `unsupported-algorithm` doesn't check `LOCK=NONE` on MariaDB.
 - **SQL Server is not supported.**
 - The guard reads only the first `--path` given to `migrate`.
 
@@ -922,8 +930,8 @@ The CI database is probably empty, so every table counts as new. Migrate it with
 **A rule fires for something I know is safe.**
 Mark that migration with `#[AllowUnsafe('rule-name', reason: '...')]`. If it's never relevant for your project, turn the rule off in the config.
 
-**PostgreSQL rules don't fire.**
-They only apply when the checked connection uses the `pgsql` driver. Run the check against a PostgreSQL connection (`--database=pgsql`), not your local SQLite.
+**PostgreSQL or MySQL rules don't fire.**
+Database-specific rules only apply when the checked connection is that database. Run the check against the same kind of database you use in production (`--database=pgsql`, `--database=mysql`), not your local SQLite.
 
 **The guard doesn't block `migrate`.**
 Check that `SAFE_MIGRATIONS_GUARD=true`, that `APP_ENV` is listed in `guard.environments`, that `SAFE_MIGRATIONS_ALLOW_UNSAFE` isn't set, and run `php artisan config:cache` again if config is cached.
