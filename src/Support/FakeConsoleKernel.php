@@ -39,6 +39,7 @@ final class FakeConsoleKernel implements Kernel
         return new PendingDispatch(new QueuedCommand([$command, $parameters]));
     }
 
+    /** @return array<string, \Symfony\Component\Console\Command\Command> */
     public function all()
     {
         return [];

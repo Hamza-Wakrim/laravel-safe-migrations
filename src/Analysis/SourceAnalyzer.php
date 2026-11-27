@@ -125,7 +125,7 @@ final class SourceAnalyzer
                 continue;
             }
 
-            if ($node instanceof Stmt\If_ && ! $this->branchIsSkipped($node, $condition)) {
+            if ($node instanceof Stmt\If_ && ! $this->branchIsSkipped($node, $node->cond)) {
                 continue;
             }
 
