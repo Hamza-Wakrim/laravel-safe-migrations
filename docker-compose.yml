@@ -4,6 +4,7 @@ services:
     environment:
       SAFE_MIGRATIONS_MYSQL_HOST: mysql
       SAFE_MIGRATIONS_PGSQL_HOST: pgsql
+      SAFE_MIGRATIONS_MARIADB_HOST: mariadb
       SAFE_MIGRATIONS_DB_NAME: safe_migrations
       SAFE_MIGRATIONS_DB_USER: safe
       SAFE_MIGRATIONS_DB_PASSWORD: secret
@@ -11,6 +12,8 @@ services:
       mysql:
         condition: service_healthy
       pgsql:
+        condition: service_healthy
+      mariadb:
         condition: service_healthy
 
   mysql:
@@ -22,6 +25,19 @@ services:
       MYSQL_ROOT_PASSWORD: secret
     healthcheck:
       test: ["CMD", "mysqladmin", "ping", "-h", "127.0.0.1", "-usafe", "-psecret"]
+      interval: 3s
+      timeout: 3s
+      retries: 30
+
+  mariadb:
+    image: mariadb:11.4
+    environment:
+      MARIADB_DATABASE: safe_migrations
+      MARIADB_USER: safe
+      MARIADB_PASSWORD: secret
+      MARIADB_ROOT_PASSWORD: secret
+    healthcheck:
+      test: ["CMD", "healthcheck.sh", "--connect", "--innodb_initialized"]
       interval: 3s
       timeout: 3s
       retries: 30
