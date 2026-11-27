@@ -250,7 +250,7 @@ jobs:
       DB_PASSWORD: secret
     steps:
       # 1. Apply the migrations that are already on the main branch.
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           ref: ${{ github.base_ref }}
       - uses: shivammathur/setup-php@v2
@@ -260,7 +260,7 @@ jobs:
       - run: php artisan migrate --force
 
       # 2. Switch to the pull request and check only its new migrations.
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           clean: false
       - run: composer install --no-interaction
