@@ -47,6 +47,8 @@ final class Analyzer
             new Rules\ConcurrentInTransactionRule,
             new Rules\BlockingForeignKeyRule,
             new Rules\TableRebuildRule,
+            new Rules\TableCopyRule,
+            new Rules\UnsupportedAlgorithmRule,
             new Rules\DataMutationRule,
             new Rules\LockTimeoutRule,
         ];

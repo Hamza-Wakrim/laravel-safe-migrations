@@ -2,6 +2,18 @@
 
 All notable changes to this project are documented here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Added
+
+- **`table-copy` rule (MySQL, MariaDB, warning).** Flags `ALTER TABLE`s on existing tables that copy the whole table (`ALGORITHM=COPY`) or can't run with `LOCK=NONE`: adding a foreign key with `foreign_key_checks` on, `STORED` generated columns, `CONVERT TO CHARACTER SET`, dropping the primary key on its own, `ALGORITHM=COPY`, and `FULLTEXT` / `SPATIAL` indexes and `AUTO_INCREMENT` columns. Adding a foreign key inside `Schema::withoutForeignKeyConstraints()` runs in place and is not reported. The messages differ per server: MySQL blocks writes during the copy; MariaDB does before 11.2, and from 11.2 copies with writes going on.
+- **`unsupported-algorithm` rule (MySQL, MariaDB, error).** Flags an `ALGORITHM=INSTANT` / `INPLACE` / `NOCOPY` or `LOCK=NONE` the operation can't use, which the server rejects so the migration fails in production. `LOCK=NONE` is only checked on MySQL, because MariaDB 11.2+ accepts it for table copies. Every combination is tested against real MySQL 8.4 and MariaDB 11.4 servers.
+- **MariaDB behind the `mysql` driver is detected.** Statements from a MariaDB server are checked as `mariadb` even when the connection uses Laravel's `mysql` driver.
+
+### Changed
+
+- A rollback's `down()` is now also checked without the `foreign_key_checks` setting `up()` made, since a rollback runs in another session.
+
 ## [1.3.1] - 2026-11-27
 
 ### Fixed

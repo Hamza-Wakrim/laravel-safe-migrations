@@ -20,7 +20,7 @@ use HamzaWakrim\SafeMigrations\Tests\TestCase;
  */
 final class GrammarIntegrationTest extends TestCase
 {
-    /** @return array<string, array{Closure, array<string, list<string>>}> */
+    /** @return array<string, array{Closure, array<string, list<string>|null>}> */
     public static function operations(): array
     {
         $table = fn (Closure $callback) => fn (Builder $schema) => $schema->table('users', $callback);
@@ -44,8 +44,18 @@ final class GrammarIntegrationTest extends TestCase
             'add foreign key' => [$table(fn (Blueprint $t) => $t->foreignId('team_id')->nullable()->constrained('teams')), [
                 'pgsql' => ['blocking-foreign-key'],
                 'sqlite' => ['table-rebuild'],
+                'mysql' => ['table-copy'],
+            ]],
+            'add foreign key without checks' => [fn (Builder $s) => $s->withoutForeignKeyConstraints(
+                fn () => $s->table('users', fn (Blueprint $t) => $t->foreignId('team_id')->nullable()->constrained('teams')),
+            ), [
+                'pgsql' => ['blocking-foreign-key'],
+                'sqlite' => ['table-rebuild'],
                 '*' => [],
             ]],
+            'add fulltext index' => [$table(fn (Blueprint $t) => $t->fullText('name')), ['mysql' => ['table-copy'], 'pgsql' => ['blocking-index'], 'sqlite' => null]],
+            'add stored column' => [$table(fn (Blueprint $t) => $t->string('upper_name')->storedAs('upper(name)')->nullable()), ['mysql' => ['table-copy'], '*' => []]],
+            'add virtual column' => [$table(fn (Blueprint $t) => $t->string('lower_name')->virtualAs('lower(name)')->nullable()), ['*' => []]],
             'new table changes' => [function (Builder $s) {
                 $s->create('teams', function (Blueprint $t) {
                     $t->id();
@@ -64,9 +74,18 @@ final class GrammarIntegrationTest extends TestCase
     /** @return iterable<string, array{string, Closure, array<string, list<string>>}> */
     public static function cases(): iterable
     {
-        foreach (['sqlite' => 'testing', 'mysql' => 'mysql', 'pgsql' => 'pgsql'] as $driver => $connection) {
+        foreach (['sqlite' => 'testing', 'mysql' => 'mysql', 'mariadb' => 'mariadb', 'pgsql' => 'pgsql'] as $driver => $connection) {
             foreach (self::operations() as $name => [$operation, $expected]) {
-                yield "{$driver}: {$name}" => [$connection, $operation, $expected[$driver] ?? $expected['*']];
+                // MariaDB expects what MySQL expects unless a case says otherwise.
+                $forDriver = array_key_exists($driver, $expected) ? $expected[$driver]
+                    : ($driver === 'mariadb' && array_key_exists('mysql', $expected) ? $expected['mysql'] : $expected['*'] ?? []);
+
+                // null: Laravel can't generate this on that database.
+                if ($forDriver === null) {
+                    continue;
+                }
+
+                yield "{$driver}: {$name}" => [$connection, $operation, $forDriver];
             }
         }
     }

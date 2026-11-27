@@ -126,6 +126,18 @@ final class RealDatabaseCommandsTest extends TestCase
         $this->assertTrue(Schema::hasColumn('users', 'name'));
     }
 
+    public function test_mariadb_behind_the_mysql_driver_is_detected(): void
+    {
+        $this->useConnection('mysql');
+        $this->assertSame(['unsupported-algorithm'], array_column($this->findings('lock-none'), 'rule'), 'MySQL rejects LOCK=NONE here.');
+
+        // The same `mysql` driver config, pointed at the MariaDB server.
+        $this->useConnection('mariadb');
+        config(['database.connections.maria_via_mysql' => ['driver' => 'mysql'] + config('database.connections.mariadb'), 'database.default' => 'maria_via_mysql']);
+
+        $this->assertSame([], $this->findings('lock-none'), 'MariaDB 11.2+ accepts LOCK=NONE here.');
+    }
+
     /** @return list<array<string, string|null>> */
     private function findings(string $fixture): array
     {

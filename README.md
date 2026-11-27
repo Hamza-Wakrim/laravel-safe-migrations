@@ -163,6 +163,8 @@ If you published the config file, you can optionally add the rules added since 1
 'missing-down' => null,               // new in 1.3.0, off until you set 'warning' or 'error'
 'schema-condition' => null,           // new in 1.3.0, warning
 'reads-data' => null,                 // new in 1.3.0, warning
+'table-copy' => null,                 // new in 1.4.0, warning (MySQL, MariaDB)
+'unsupported-algorithm' => null,      // new in 1.4.0, error (MySQL, MariaDB)
 ```
 
 Without them each rule keeps its default severity.
@@ -361,6 +363,8 @@ To skip a migration completely (for example, an old one you don't want to touch)
 | [`concurrent-in-transaction`](#concurrent-in-transaction) | error | PostgreSQL |
 | [`blocking-foreign-key`](#blocking-foreign-key) | warning | PostgreSQL |
 | [`table-rebuild`](#table-rebuild) | warning | SQLite |
+| [`table-copy`](#table-copy) | warning | MySQL, MariaDB |
+| [`unsupported-algorithm`](#unsupported-algorithm) | error | MySQL, MariaDB |
 | [`data-mutation`](#data-mutation) | warning | all |
 | [`lock-timeout`](#lock-timeout) | off (opt-in) | MySQL, MariaDB, PostgreSQL |
 | [`unsafe-rollback`](#unsafe-rollback) | warning | all |
@@ -544,6 +548,66 @@ DB::statement('ALTER TABLE posts VALIDATE CONSTRAINT posts_user_id_foreign');
 
 **Safe way:** usually nothing. Just be aware of it on large SQLite databases.
 
+### `table-copy`
+
+**Flags (MySQL, MariaDB):** an `ALTER TABLE` on an existing table that copies the whole table (`ALGORITHM=COPY`) or can't run with `LOCK=NONE`:
+
+| Operation | Why |
+| --- | --- |
+| Adding a foreign key (`->constrained()`, `->foreign()`) | With `foreign_key_checks` on, only `ALGORITHM=COPY` is possible |
+| Adding a `STORED` / `PERSISTENT` generated column (`->storedAs()`) | Always a table copy |
+| `CONVERT TO CHARACTER SET` | Always a table copy |
+| Dropping the primary key without adding a new one in the same statement | Always a table copy |
+| `ALGORITHM=COPY` written in the statement | Asks for a copy |
+| Adding a `FULLTEXT` or `SPATIAL` index, or an `AUTO_INCREMENT` column | Can't run with `LOCK=NONE` |
+
+Everything else Laravel generates (adding and dropping columns, plain indexes, renames) runs `INSTANT` or in place while writes go on, so it is not reported. Column type changes are reported by [`change-column`](#change-column).
+
+**Why:** on MySQL, writes to the table are blocked until the copy finishes. On a large table that is minutes of downtime. On MariaDB the answer depends on the version: before 11.2 writes are blocked; from 11.2 MariaDB can copy with `LOCK=NONE`, so writes go on, but the copy still takes time, double the disk space and causes replication lag.
+
+**Safe way:**
+
+```php
+// Foreign key: with checks off, MySQL and MariaDB add it in place, without a copy.
+// Existing rows are not validated then, so make sure they are valid first.
+Schema::withoutForeignKeyConstraints(function () {
+    Schema::table('posts', fn (Blueprint $table) => $table->foreignId('team_id')->nullable()->constrained());
+});
+
+// Generated column: VIRTUAL is instant, STORED copies the table.
+$table->string('full_name')->virtualAs("concat(first_name, ' ', last_name)");
+```
+
+For the rest (character set conversion, FULLTEXT on a large table), use an online schema change tool such as gh-ost or pt-online-schema-change, or a maintenance window.
+
+To make sure a raw `ALTER` never copies silently, ask for the algorithm and lock you expect. The server then refuses the statement instead of copying, and this rule doesn't report it:
+
+```php
+DB::statement('ALTER TABLE users ADD INDEX users_email_index (email), ALGORITHM=INPLACE, LOCK=NONE');   // MySQL
+DB::statement('ALTER TABLE users ADD INDEX users_email_index (email), ALGORITHM=NOCOPY, LOCK=NONE');    // MariaDB
+```
+
+A MariaDB server behind Laravel's `mysql` driver is detected and checked as MariaDB.
+
+### `unsupported-algorithm`
+
+**Flags (MySQL, MariaDB):** an `ALGORITHM=` or `LOCK=` in the statement that the operation can't use, so the server rejects it and the migration fails in production:
+
+| Asked for | Rejected for |
+| --- | --- |
+| `ALGORITHM=INSTANT` | adding any index or primary key, dropping the primary key, foreign keys, character set conversion, engine changes, `AUTO_INCREMENT` and `STORED` columns |
+| `ALGORITHM=INPLACE` | the table copies listed under [`table-copy`](#table-copy) |
+| `ALGORITHM=NOCOPY` (MariaDB) | adding or dropping the primary key, character set conversion, `AUTO_INCREMENT` and `STORED` columns, foreign keys with checks on |
+| `LOCK=NONE` (MySQL only) | everything listed under [`table-copy`](#table-copy) |
+
+```php
+DB::statement('ALTER TABLE users ADD INDEX users_email (email), ALGORITHM=INSTANT');   // flagged: indexes are never instant
+```
+
+`LOCK=NONE` is only checked on MySQL: MariaDB 11.2+ accepts it for table copies, so on MariaDB the answer depends on the server version. These combinations are tested against real MySQL 8.4 and MariaDB 11.4 servers.
+
+**Safe way:** remove the option, or move that operation to an `ALTER TABLE` of its own without it.
+
 ### `data-mutation`
 
 **Flags:** `UPDATE` or `DELETE` without a `WHERE` clause, and `TRUNCATE`, on existing tables.
@@ -676,6 +740,8 @@ return [
         'concurrent-in-transaction' => null,
         'blocking-foreign-key' => null,
         'table-rebuild' => null,
+        'table-copy' => null,
+        'unsupported-algorithm' => null,
         'data-mutation' => null,
         'analysis-failed' => null,
         'lock-timeout' => null,   // off unless set to 'warning' or 'error'
@@ -880,6 +946,7 @@ docker compose down
 - `tests/Feature/RollbackAndIsolationTest.php` covers rollback analysis (`unsafe-rollback`, `missing-down`) and checks that storage, cache, events, processes and `Artisan::call()` are faked and restored.
 - `tests/Unit/SourceAnalyzerTest.php` checks the source rules (`schema-condition`, `reads-data`) against migration code.
 - `tests/Feature/TransactionDetectionTest.php` checks that statements know whether they run inside the migration's transaction, decided the same way as `migrate`.
+- `tests/Feature/MySqlOnlineDdlTest.php` runs every statement `unsupported-algorithm` calls "rejected" on real MySQL and MariaDB servers, and checks that the server really rejects it and that the in-place alternatives really work.
 - `tests/Feature/RealDatabaseCommandsTest.php` runs the commands end to end on real MySQL, MariaDB and PostgreSQL, including rollback analysis, `lock-timeout` and MariaDB's `WAIT` / `SET STATEMENT`.
 - `composer analyse` runs Larastan (PHPStan for Laravel) at level 8.
 
